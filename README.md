@@ -1,8 +1,28 @@
-# 🎲 던전톡 RAG MVP
+# 🎲 던전톡 RAG MVP - Dev Branch
 
 TRPG(테이블탑 RPG) AI 어시스턴트 - RAG 기반 던전마스터
 
-> **완전 초보자도 5분만에 설치 가능!** Claude AI가 당신의 TRPG 문서를 학습하여 지능적인 던전마스터가 됩니다.
+> **리팩토링 완료!** 멀티유저 세션 지원, Spring Boot 연동 준비, 성능 최적화가 포함된 개발 브랜치입니다.
+
+## 🚀 Dev Branch 주요 변경사항
+
+### ✨ 새로운 기능
+- **멀티유저 세션 관리**: 3명이 같은 방에서 함께 TRPG 플레이 가능
+- **Spring Boot 완벽 연동**: 상세한 연동 가이드와 예제 코드 제공
+- **세션별 대화 분리**: 각 방마다 독립된 AI 던전마스터
+- **화자 구분 시스템**: 누가 말했는지 정확히 기록
+
+### 🔧 기술적 개선
+- **SessionManager 클래스**: 전역 변수 → 클래스 기반 관리로 리팩토링
+- **환경변수 설정**: 하드코딩된 값들을 .env로 이동하여 설정 가능
+- **LangChain 최신화**: deprecated 메서드 → invoke() 방식으로 업데이트
+- **향상된 에러 처리**: 구체적인 예외 타입별 처리 및 로깅 개선
+
+### 📚 문서화
+- **SPRING_BOOT_INTEGRATION.md**: 완전한 Spring Boot 연동 가이드
+- **SPRING_INTEGRATION_GUIDE.md**: 기존 간단 가이드 (호환성 유지)
+
+---
 
 ## 📋 사전 준비물
 
@@ -123,11 +143,12 @@ curl -X POST "http://localhost:8005/chat" \
 ```
 
 ## 🛠 기술 스택
-- **FastAPI**: REST API 서버
-- **Streamlit**: 웹 UI
-- **Claude 3.5 Sonnet**: LLM
+- **FastAPI**: REST API 서버 (포트 8000)
+- **Streamlit**: 웹 UI (개발/테스트용)
+- **Spring Boot**: 백엔드 연동 준비 완료
+- **Claude 3.5 Sonnet / DeepSeek / Ollama**: 다중 LLM 지원
 - **ChromaDB**: 벡터 데이터베이스
-- **LangChain**: RAG 파이프라인
+- **LangChain**: RAG 파이프라인 (최신 버전 호환)
 
 ## 📋 요구사항
 - Python 3.8+
@@ -225,3 +246,41 @@ python main.py
 **GitHub Issues에 문의:**
 - [이슈 등록](https://github.com/DungeonTalk/python-ai-model/issues)
 - 에러 메시지와 실행 환경 포함
+
+---
+
+## 🌱 Spring Boot 연동
+
+본 브랜치는 Spring Boot와의 완벽한 연동을 지원합니다.
+
+### 📖 연동 가이드
+- **[SPRING_BOOT_INTEGRATION.md](./SPRING_BOOT_INTEGRATION.md)**: 완전한 연동 가이드
+  - 단계별 구현 방법
+  - 실제 동작하는 예제 코드
+  - 에러 처리 및 최적화
+  - 프론트엔드 연동 방법
+
+### 🎯 주요 API 엔드포인트
+```bash
+# 멀티유저 채팅 (Spring Boot에서 호출)
+POST /chat
+{
+  "session_id": "room_abc123",
+  "user_name": "김철수", 
+  "message": "안녕하세요"
+}
+
+# 세션 목록 조회
+GET /sessions
+
+# 세션별 대화 기록
+GET /sessions/{session_id}/history
+```
+
+### 🚀 빠른 시작 (Spring Boot 개발자용)
+1. Python 서버 실행: `python main.py` (포트 8000)
+2. Spring Boot에서 WebClient로 `/chat` 엔드포인트 호출
+3. 세션 ID와 사용자명을 포함하여 요청
+4. AI 응답 받아서 프론트엔드에 전달
+
+자세한 내용은 [SPRING_BOOT_INTEGRATION.md](./SPRING_BOOT_INTEGRATION.md)를 참고하세요.
