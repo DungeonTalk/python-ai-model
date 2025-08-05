@@ -22,7 +22,20 @@
       "Bash(git init:*)",
       "Bash(git add:*)",
       "Bash(git remote add:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(git commit:*)",
+      "Bash(pip install uv)",
+      "Bash(uv:*)",
+      "Bash(source:*)",
+      "Bash(ls:*)",
+      "Bash(rm:*)",
+      "Bash(pip install:*)",
+      "Bash(C:UsersPCAppDataLocalProgramsPythonPython313python.exe main.py)",
+      "Bash(\"C:\\Users\\PC\\AppData\\Local\\Programs\\Python\\Python313\\python.exe\" main.py)",
+      "Bash(\"C:\\Users\\PC\\AppData\\Local\\Programs\\Python\\Python313\\python.exe\" -m pip install fastapi uvicorn langchain langchain-chroma langchain-huggingface langchain-ollama langchain-anthropic langchain-community python-dotenv)",
+      "Bash(\"C:\\Users\\PC\\AppData\\Local\\Programs\\Python\\Python313\\python.exe\" -m pip install sentence-transformers)",
+      "Bash(setup.bat)",
+      "Bash(cmd:*)"
     ],
     "deny": []
   }
