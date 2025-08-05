@@ -5,6 +5,7 @@ from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_ollama import OllamaLLM
 from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 from langchain.chains import RetrievalQA
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import TextLoader
@@ -48,6 +49,14 @@ class RAGEngine:
             self.llm = ChatAnthropic(
                 model=os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022"),
                 api_key=os.getenv("ANTHROPIC_API_KEY"),
+                temperature=0.7,
+                max_tokens=2000
+            )
+        elif llm_provider == "deepseek":
+            self.llm = ChatOpenAI(
+                model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+                api_key=os.getenv("DEEPSEEK_API_KEY"),
+                base_url="https://api.deepseek.com",
                 temperature=0.7,
                 max_tokens=2000
             )
