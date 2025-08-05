@@ -10,10 +10,11 @@ git clone [repository-url]
 cd dungeontalk-mvp
 ```
 
-### 2. 자동 설치 (Windows)
+### 2. 자동 설치 (Windows) - UV 고속 버전
 ```bash
 setup.bat
 ```
+*UV를 사용하여 기존 pip보다 10-100배 빠른 설치*
 
 ### 3. 환경 변수 설정
 1. `.env.example`을 `.env`로 복사
@@ -62,7 +63,16 @@ streamlit run streamlit_app.py
 
 ### "ModuleNotFoundError" 오류
 ```bash
+# UV 사용 (권장)
+uv pip install -r requirements.txt
+
+# 또는 기존 pip 사용
 pip install -r requirements.txt
+```
+
+### UV 수동 설치 (선택사항)
+```bash
+pip install uv
 ```
 
 ### Claude API 오류
