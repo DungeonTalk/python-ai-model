@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from langchain_ollama import OllamaLLM
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
@@ -20,7 +21,84 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+def validate_environment():
+    """환경변수 검증"""
+    llm_provider = os.getenv("LLM_PROVIDER", "ollama").lower()
+    
+    if llm_provider == "claude":
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key or api_key.startswith("sk-ant-api03-여기에"):
+            raise ValueError("ANTHROPIC_API_KEY가 설정되지 않았거나 예시 값입니다.")
+    elif llm_provider == "deepseek":
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not api_key:
+            raise ValueError("DEEPSEEK_API_KEY가 설정되지 않았습니다.")
+    
+    print(f"[INFO] 환경변수 검증 완료 - LLM Provider: {llm_provider}")
+
+# 환경변수 검증
+try:
+    validate_environment()
+except ValueError as e:
+    print(f"[ERROR] {e}")
+    print("[ERROR] .env 파일을 확인하고 올바른 API 키를 설정해주세요.")
+    exit(1)
+
 app = FastAPI(title="던전톡 RAG API")
+
+class SessionManager:
+    """세션별 대화 기록 관리 클래스"""
+    
+    def __init__(self, max_sessions: int = 100):
+        self.histories = {}  # {session_id: [chat_records]}
+        self.max_sessions = max_sessions
+    
+    def get_history(self, session_id: str) -> list:
+        """세션 대화 기록 조회"""
+        return self.histories.get(session_id, [])
+    
+    def save_chat_record(self, session_id: str, user_name: str, message: str, response: str):
+        """대화 기록 저장"""
+        # 세션 수 제한 체크
+        if len(self.histories) >= self.max_sessions and session_id not in self.histories:
+            print(f"[WARNING] 최대 세션 수({self.max_sessions}) 도달. 새 세션 생성 불가.")
+            return
+        
+        if session_id not in self.histories:
+            self.histories[session_id] = []
+        
+        # 대화 기록 추가
+        chat_record = {
+            "user": user_name,
+            "message": message,
+            "response": response,
+            "timestamp": hash(str(len(self.histories[session_id])))  # 간단한 순서 ID
+        }
+        
+        self.histories[session_id].append(chat_record)
+        
+        # 세션당 최대 50개 대화만 보관 (메모리 절약)
+        if len(self.histories[session_id]) > 50:
+            self.histories[session_id] = self.histories[session_id][-30:]  # 최근 30개만 유지
+    
+    def get_sessions_info(self):
+        """전체 세션 정보 조회"""
+        sessions_info = {}
+        for session_id, history in self.histories.items():
+            sessions_info[session_id] = {
+                "message_count": len(history),
+                "users": list(set([record["user"] for record in history])),
+                "last_activity": history[-1]["timestamp"] if history else None
+            }
+        
+        return {
+            "total_sessions": len(self.histories),
+            "max_sessions": self.max_sessions,
+            "sessions": sessions_info
+        }
+
+# 세션 매니저 인스턴스 생성
+session_manager = SessionManager(max_sessions=int(os.getenv("MAX_SESSIONS", "100")))
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,14 +109,25 @@ app.add_middleware(
 
 class RAGEngine:
     def __init__(self):
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name="intfloat/multilingual-e5-large",
-            model_kwargs={'device': 'cpu'},
-            encode_kwargs={'normalize_embeddings': True}
-        )
+        # 원격 임베딩 사용 여부 확인
+        use_remote = os.getenv("USE_REMOTE_EMBEDDINGS", "false").lower() == "true"
+        
+        if use_remote:
+            self.embeddings = OpenAIEmbeddings(
+                model=os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+                api_key=os.getenv("OPENAI_API_KEY")
+            )
+            print("[INFO] OpenAI 원격 임베딩 사용")
+        else:
+            self.embeddings = HuggingFaceEmbeddings(
+                model_name=os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-large"),
+                model_kwargs={'device': 'cpu'},
+                encode_kwargs={'normalize_embeddings': True}
+            )
+            print("[INFO] 로컬 HuggingFace 임베딩 사용")
         
         self.vectorstore = Chroma(
-            persist_directory="./vectorstore_new",
+            persist_directory="./vectorstore_openai",  # 새 폴더 사용
             embedding_function=self.embeddings
         )
         
@@ -49,16 +138,16 @@ class RAGEngine:
             self.llm = ChatAnthropic(
                 model=os.getenv("CLAUDE_MODEL", "claude-3-5-sonnet-20241022"),
                 api_key=os.getenv("ANTHROPIC_API_KEY"),
-                temperature=0.7,
-                max_tokens=2000
+                temperature=float(os.getenv("LLM_TEMPERATURE", "0.7")),
+                max_tokens=int(os.getenv("LLM_MAX_TOKENS", "2000"))
             )
         elif llm_provider == "deepseek":
             self.llm = ChatOpenAI(
                 model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
                 api_key=os.getenv("DEEPSEEK_API_KEY"),
                 base_url="https://api.deepseek.com",
-                temperature=0.7,
-                max_tokens=2000
+                temperature=float(os.getenv("LLM_TEMPERATURE", "0.7")),
+                max_tokens=int(os.getenv("LLM_MAX_TOKENS", "2000"))
             )
         else:
             self.llm = OllamaLLM(
@@ -66,25 +155,50 @@ class RAGEngine:
                 base_url="http://localhost:11434"
             )
         
+        # 검색 관련 설정
+        search_k = int(os.getenv("SEARCH_K", "3"))
+        
         self.qa_chain = RetrievalQA.from_chain_type(
             llm=self.llm,
-            retriever=self.vectorstore.as_retriever(search_kwargs={"k": 3}),
+            retriever=self.vectorstore.as_retriever(search_kwargs={"k": search_k}),
             return_source_documents=True
         )
         
         # 파일 해시 추적을 위한 경로
-        self.hash_file = "./vectorstore_new/file_hashes.json"
+        self.hash_file = "./vectorstore_openai/file_hashes.json"
         
         # 서버 시작시 자동으로 documents 폴더 스캔
         self.auto_embed_documents()
     
     def add_document(self, file_path: str):
-        loader = TextLoader(file_path, encoding='utf-8')
-        documents = loader.load()
+        """문서를 벡터스토어에 추가 (다양한 인코딩 지원)"""
+        # 인코딩 자동 감지 및 로드
+        try:
+            # UTF-8 먼저 시도
+            loader = TextLoader(file_path, encoding='utf-8')
+            documents = loader.load()
+        except UnicodeDecodeError:
+            try:
+                # CP949 (한국어 Windows 기본) 시도
+                loader = TextLoader(file_path, encoding='cp949')
+                documents = loader.load()
+                print(f"[INFO] CP949 인코딩으로 로드됨: {file_path}")
+            except UnicodeDecodeError:
+                try:
+                    # UTF-8 with BOM 시도
+                    loader = TextLoader(file_path, encoding='utf-8-sig')
+                    documents = loader.load()
+                    print(f"[INFO] UTF-8 BOM 인코딩으로 로드됨: {file_path}")
+                except Exception as e:
+                    print(f"[ERROR] 파일 인코딩을 감지할 수 없습니다 ({file_path}): {e}")
+                    return
+        
+        chunk_size = int(os.getenv("CHUNK_SIZE", "1000"))
+        chunk_overlap = int(os.getenv("CHUNK_OVERLAP", "200"))
         
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap
         )
         texts = text_splitter.split_documents(documents)
         
@@ -93,24 +207,37 @@ class RAGEngine:
         # 파일 해시 업데이트
         self.update_file_hash(file_path)
     
-    def query(self, question: str):
-        trpg_question = f"""당신은 TRPG GM입니다. 게임을 진행해주세요.
-
-        "# 답변 형식 규칙:
-        1. 상황과 문맥에  맞는 대답을 해줘
-        2. 게임 목표갈 수 있게 유도를 해줘
-        3.상황을 생생하게 묘사하고, 플레이어의 행동과 선택한 세계관에 따라 스토리를 전개시킵니다
-        4.각 세계관의 분위기에 맞는 몰입감 있는 롤플레잉을 제공합니다
-        5.현재 상황을 기억하고 일관성 있게 반응합니다.       
-        6. 문장과 문장 사이에는 적절한 줄바꿈을 넣어주세요ㄴ
-        7. 긴 설명은 문단으로 나누어 가독성을 높여주세요
-        8. 중요한 정보나 선택지는 별도 줄로 구분해주세요
-        9. 상황 묘사와 대화는 구분해서 작성해주세요
-        10. npc 겸 도우미을 만들어서 게임이 끝나는 방향으로 유도하는 메세지를 하나 더 추가해줘
-
-{question}"""
+    def query(self, question: str, session_history: list = None, current_user: str = None):
+        # 이전 대화 기록을 문맥으로 구성
+        context = ""
+        if session_history:
+            # 최근 대화 개수 설정
+            recent_chat_count = int(os.getenv("RECENT_CHAT_COUNT", "5"))
+            context = "\n이전 대화 기록:\n"
+            for record in session_history[-recent_chat_count:]:  # 최근 N개만 사용
+                context += f"- {record['user']}: {record['message']}\n"
+                context += f"  GM: {record['response'][:100]}...\n"
         
-        result = self.qa_chain({"query": trpg_question})
+        trpg_question = f"""당신은 TRPG GM입니다. 다중 플레이어 게임을 진행해주세요.
+
+{context}
+
+현재 발언자: {current_user}
+새로운 질문/행동: {question}
+
+# 답변 형식 규칙:
+1. 이전 대화 맥락을 고려하여 일관성 있게 답변해주세요
+2. 현재 발언자({current_user})의 행동에 초점을 맞춰 답변해주세요
+3. 다른 파티원들도 고려한 상황 묘사를 해주세요
+4. 상황을 생생하게 묘사하고, 플레이어의 행동에 따라 스토리를 전개시킵니다
+5. 각 세계관의 분위기에 맞는 몰입감 있는 롤플레잉을 제공합니다
+6. 문장과 문장 사이에는 적절한 줄바꿈을 넣어주세요
+7. 긴 설명은 문단으로 나누어 가독성을 높여주세요
+8. 중요한 정보나 선택지는 별도 줄로 구분해주세요
+9. 상황 묘사와 대화는 구분해서 작성해주세요
+10. 필요시 다른 파티원들에게도 행동을 촉구해주세요"""
+        
+        result = self.qa_chain.invoke({"query": trpg_question})
         
         return {
             "answer": result["result"],
@@ -126,7 +253,14 @@ class RAGEngine:
                 for chunk in iter(lambda: f.read(4096), b""):
                     hash_md5.update(chunk)
             return hash_md5.hexdigest()
-        except Exception:
+        except FileNotFoundError:
+            print(f"[ERROR] 파일을 찾을 수 없습니다: {file_path}")
+            return ""
+        except PermissionError:
+            print(f"[ERROR] 파일 접근 권한이 없습니다: {file_path}")
+            return ""
+        except Exception as e:
+            print(f"[ERROR] 파일 해시 계산 실패 ({file_path}): {e}")
             return ""
     
     def load_file_hashes(self) -> dict:
@@ -135,8 +269,12 @@ class RAGEngine:
             if os.path.exists(self.hash_file):
                 with open(self.hash_file, 'r', encoding='utf-8') as f:
                     return json.load(f)
-        except Exception:
-            pass
+        except json.JSONDecodeError as e:
+            print(f"[ERROR] 해시 파일 JSON 파싱 실패: {e}")
+        except UnicodeDecodeError as e:
+            print(f"[ERROR] 해시 파일 인코딩 오류: {e}")
+        except Exception as e:
+            print(f"[ERROR] 해시 파일 로드 실패: {e}")
         return {}
     
     def save_file_hashes(self, hashes: dict):
@@ -209,21 +347,58 @@ class RAGEngine:
 rag = RAGEngine()
 
 class ChatRequest(BaseModel):
+    session_id: str
+    user_name: str
     message: str
 
 class ChatResponse(BaseModel):
     response: str
     sources: list = []
+    session_id: str
+
+def get_session_history(session_id: str) -> list:
+    """세션 대화 기록 조회"""
+    return session_manager.get_history(session_id)
+
+def save_chat_record(session_id: str, user_name: str, message: str, response: str):
+    """대화 기록 저장"""
+    session_manager.save_chat_record(session_id, user_name, message, response)
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     try:
-        result = rag.query(request.message)
+        print(f"[DEBUG] 채팅 요청 - 세션: {request.session_id}, 사용자: {request.user_name}")
+        
+        # 세션 기록 조회
+        session_history = get_session_history(request.session_id)
+        
+        # AI 응답 생성
+        result = rag.query(
+            question=request.message,
+            session_history=session_history,
+            current_user=request.user_name
+        )
+        
+        # 대화 기록 저장
+        save_chat_record(
+            session_id=request.session_id,
+            user_name=request.user_name,
+            message=request.message,
+            response=result["answer"]
+        )
+        
+        print(f"[DEBUG] 응답 성공 - 세션 대화 수: {len(session_manager.get_history(request.session_id))}")
+        
         return ChatResponse(
             response=result["answer"],
-            sources=result["sources"]
+            sources=result["sources"],
+            session_id=request.session_id
         )
     except Exception as e:
+        print(f"[ERROR] 채팅 처리 중 오류: {str(e)}")
+        print(f"[ERROR] 오류 타입: {type(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/upload")
@@ -254,6 +429,28 @@ async def rescan_documents():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/sessions")
+async def get_active_sessions():
+    """활성 세션 목록 조회"""
+    return session_manager.get_sessions_info()
+
+@app.get("/sessions/{session_id}/history")
+async def get_session_history_endpoint(session_id: str):
+    """특정 세션의 대화 기록 조회"""
+    history = get_session_history(session_id)
+    if not history:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다")
+    
+    return {
+        "session_id": session_id,
+        "message_count": len(history),
+        "history": history
+    }
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8005)
+    port = int(os.getenv("API_PORT", "8000"))
+    host = os.getenv("API_HOST", "0.0.0.0")
+    
+    print(f"[INFO] 서버 시작 - {host}:{port}")
+    uvicorn.run(app, host=host, port=port)
