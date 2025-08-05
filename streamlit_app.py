@@ -22,7 +22,7 @@ with st.sidebar:
     st.header("⚙️ 설정")
     
     # API 서버 주소
-    api_base = st.text_input("API 서버 주소", value="http://localhost:8005")
+    api_base = st.text_input("API 서버 주소", value="http://localhost:8000")
     
     # 모델 선택
     llm_provider = st.selectbox(
@@ -49,22 +49,35 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # 문서 업로드
-    st.header("📚 문서 업로드")
-    uploaded_file = st.file_uploader(
-        "TRPG 문서를 업로드하세요",
-        type=['txt', 'md'],
-        help="NPC 설정, 스토리, 룰북 등을 업로드할 수 있습니다"
-    )
+    # 세션 정보
+    st.header("🎮 세션 정보")
     
-    if uploaded_file and st.button("📤 업로드"):
+    # 세션 ID 생성 및 저장
+    if "session_id" not in st.session_state:
+        import uuid
+        st.session_state.session_id = f"room_{uuid.uuid4().hex[:8]}"
+        st.session_state.user_name = f"플레이어{uuid.uuid4().hex[:4]}"
+    
+    # 사용자 정보 입력
+    user_name = st.text_input("사용자 이름", value=st.session_state.user_name)
+    if user_name != st.session_state.user_name:
+        st.session_state.user_name = user_name
+    
+    st.info(f"🏠 현재 방: {st.session_state.session_id}")
+    st.info(f"👤 사용자: {st.session_state.user_name}")
+    
+    # 문서 정보 (업로드 기능 제거)
+    st.markdown("---")
+    st.header("📚 게임 문서")
+    st.info("💡 documents 폴더의 파일들이 자동으로 로드됩니다")
+    
+    if st.button("🔄 문서 새로고침"):
         try:
-            files = {'file': uploaded_file}
-            response = requests.post(f"{api_base}/upload", files=files)
+            response = requests.post(f"{api_base}/rescan")
             if response.status_code == 200:
-                st.success(f"✅ {uploaded_file.name} 업로드 완료!")
+                st.success("✅ 문서가 새로고침되었습니다!")
             else:
-                st.error(f"❌ 업로드 실패: {response.text}")
+                st.error(f"❌ 새로고침 실패: {response.text}")
         except Exception as e:
             st.error(f"❌ 연결 오류: {e}")
 
@@ -104,10 +117,14 @@ with col1:
         with st.chat_message("assistant"):
             with st.spinner("던전마스터가 생각하고 있습니다..."):
                 try:
-                    # API 호출
+                    # API 호출 (새로운 구조)
                     response = requests.post(
                         f"{api_base}/chat",
-                        json={"message": prompt},
+                        json={
+                            "session_id": st.session_state.session_id,
+                            "user_name": st.session_state.user_name,
+                            "message": prompt
+                        },
                         headers={"Content-Type": "application/json"}
                     )
                     
@@ -156,8 +173,12 @@ with col2:
             st.success("🟢 API 서버 정상")
         else:
             st.error("🔴 API 서버 오류")
-    except:
+    except requests.exceptions.ConnectionError:
         st.error("🔴 API 서버 연결 불가")
+    except requests.exceptions.Timeout:
+        st.error("🔴 API 서버 응답 시간 초과")
+    except Exception as e:
+        st.error(f"🔴 연결 오류: {e}")
     
     # 현재 모델 표시
     current_model = os.getenv("LLM_PROVIDER", "ollama")
@@ -168,20 +189,31 @@ with col2:
     
     st.markdown("---")
     
+    # 세션 정보 표시
+    st.header("🎮 현재 세션")
+    try:
+        session_response = requests.get(f"{api_base}/sessions/{st.session_state.session_id}/history", timeout=3)
+        if session_response.status_code == 200:
+            session_data = session_response.json()
+            st.success(f"💬 대화 수: {session_data['message_count']}")
+        else:
+            st.info("💬 새로운 세션입니다")
+    except:
+        st.info("💬 세션 정보 로드 중...")
+    
     # 도움말
     st.header("💡 사용 팁")
     st.markdown("""
-    **질문 예시:**
-    - "엘프 마을의 촌장 NPC를 소개해줘"
-    - "이 던전의 숨겨진 보물은 뭐야?"
-    - "플레이어가 적과 협상하려 한다면?"
-    - "현재 상황에서 일어날 수 있는 이벤트는?"
+    **멀티플레이어 TRPG:**
+    - 여러 명이 같은 방 ID로 접속 가능
+    - 각자 다른 사용자 이름 사용
+    - 이전 대화 맥락이 자동으로 연결됨
     
-    **문서 업로드:**
-    - NPC 설정서 (.txt)
-    - 스토리 라인 (.md)
-    - 게임 룰북
-    - 월드 설정집
+    **질문 예시:**
+    - "오크를 공격한다"
+    - "방어막을 친다"  
+    - "이 상황에서 어떤 선택지가 있을까?"
+    - "다른 파티원들은 뭘 하고 있어?"
     """)
     
     # 채팅 히스토리 초기화
