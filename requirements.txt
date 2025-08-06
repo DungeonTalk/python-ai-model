@@ -6,6 +6,7 @@ langchain-ollama
 langchain-anthropic
 langchain-openai
 langchain-huggingface
+huggingface_hub
 langchain-chroma
 chromadb
 sentence-transformers
