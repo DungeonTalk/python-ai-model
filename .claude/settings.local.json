@@ -35,7 +35,25 @@
       "Bash(\"C:\\Users\\PC\\AppData\\Local\\Programs\\Python\\Python313\\python.exe\" -m pip install fastapi uvicorn langchain langchain-chroma langchain-huggingface langchain-ollama langchain-anthropic langchain-community python-dotenv)",
       "Bash(\"C:\\Users\\PC\\AppData\\Local\\Programs\\Python\\Python313\\python.exe\" -m pip install sentence-transformers)",
       "Bash(setup.bat)",
-      "Bash(cmd:*)"
+      "Bash(cmd:*)",
+      "WebFetch(domain:platform.openai.com)",
+      "Bash(git checkout:*)",
+      "Bash(chmod:*)",
+      "Bash(docker exec:*)",
+      "Bash(pip show:*)",
+      "Bash(\"C:\\Users\\PC\\AppData\\Local\\Programs\\Python\\Python313\\python.exe\" -c \"import psycopg2; print(''psycopg2 OK'')\")",
+      "Bash(\"C:\\Users\\PC\\AppData\\Local\\Programs\\Python\\Python313\\python.exe\" -c \"import psycopg2; conn = psycopg2.connect(''postgresql://postgres:postgres@localhost:5433/rag_db''); print(''PostgreSQL 연결 OK'')\")",
+      "Bash(\"C:\\Users\\PC\\AppData\\Local\\Programs\\Python\\Python313\\python.exe\" -c \"from langchain_postgres.vectorstores import PGVector; print(''PGVector 임포트 OK'')\")",
+      "Bash(\"C:\\Users\\PC\\AppData\\Local\\Programs\\Python\\Python313\\python.exe\" -m pip install \"psycopg[binary]\")",
+      "Bash(\"C:\\Users\\PC\\AppData\\Local\\Programs\\Python\\Python313\\python.exe\" -c \"from langchain_postgres.vectorstores import PGVector; print(''PGVector 임포트 성공!'')\")",
+      "Bash(\"C:\\Users\\PC\\AppData\\Local\\Programs\\Python\\Python313\\python.exe\" -c \"from main import RAGEngine; print(''RAGEngine pgvector 테스트'')\")",
+      "Bash(\"C:\\Users\\PC\\AppData\\Local\\Programs\\Python\\Python313\\python.exe\" -c \"from langchain_postgres.vectorstores import PGVector; help(PGVector.__init__)\")",
+      "Bash(\"C:\\Users\\PC\\AppData\\Local\\Programs\\Python\\Python313\\python.exe\" -c \"from main import RAGEngine; print(''pgvector 초기화 성공!'')\")",
+      "Bash(del:*)",
+      "Bash(\"C:\\Users\\PC\\AppData\\Local\\Programs\\Python\\Python313\\python.exe\" -c \"from main import RAGEngine; r = RAGEngine(); print(''문서 재스캔 완료'')\")",
+      "Bash(pip freeze)",
+      "Bash(move:*)",
+      "Bash(mv:*)"
     ],
     "deny": []
   }

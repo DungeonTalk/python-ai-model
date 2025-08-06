@@ -49,7 +49,8 @@ class PostgreSQLSessionManager:
     """PostgreSQL 기반 세션별 대화 기록 관리 클래스"""
     
     def __init__(self):
-        self.connection_string = f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
+        base_connection = f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
+        self.connection_string = f"{base_connection}?options=-csearch_path%3Ddungeontalk_rag"
         self._init_db()
     
     def _init_db(self):
@@ -181,8 +182,9 @@ class RAGEngine:
         use_postgresql = os.getenv("USE_POSTGRESQL", "false").lower() == "true"
         
         if use_postgresql:
-            # PostgreSQL 연결 문자열
-            connection_string = f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
+            # PostgreSQL 연결 문자열 (스키마 분리)
+            base_connection = f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
+            connection_string = f"{base_connection}?options=-csearch_path%3Ddungeontalk_rag"
             
             self.vectorstore = PGVector(
                 embeddings=self.embeddings,
