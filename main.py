@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from langchain_postgres.vectorstores import PGVector
+from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import OpenAIEmbeddings
 # psycopg2 대신 psycopg (v3) 사용 - 이미 langchain-postgres에 포함됨
@@ -185,7 +186,7 @@ class RAGEngine:
         if use_postgresql:
             # PostgreSQL 연결 문자열 (스키마 분리)
             base_connection = f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
-            connection_string = f"{base_connection}?options=-csearch_path%3Ddungeontalk_rag"
+            connection_string = f"{base_connection}?options=-csearch_path%3Ddungeontalk_rag%2Cpublic"
             
             self.vectorstore = PGVector(
                 embeddings=self.embeddings,
