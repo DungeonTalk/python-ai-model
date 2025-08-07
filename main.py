@@ -5,6 +5,7 @@ from langchain_postgres.vectorstores import PGVector
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import OpenAIEmbeddings
 # psycopg2 대신 psycopg (v3) 사용 - 이미 langchain-postgres에 포함됨
+import psycopg
 from langchain_ollama import OllamaLLM
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
@@ -56,7 +57,7 @@ class PostgreSQLSessionManager:
     def _init_db(self):
         """데이터베이스 연결 및 테이블 초기화"""
         try:
-            conn = psycopg2.connect(self.connection_string)
+            conn = psycopg.connect(self.connection_string)
             with conn.cursor() as cur:
                 # sessions 테이블이 없으면 생성
                 cur.execute("""
@@ -78,7 +79,7 @@ class PostgreSQLSessionManager:
     def get_history(self, session_id: str, limit: int = 10) -> list:
         """세션 대화 기록 조회"""
         try:
-            conn = psycopg2.connect(self.connection_string)
+            conn = psycopg.connect(self.connection_string)
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT user_name, message, response, created_at 
@@ -107,7 +108,7 @@ class PostgreSQLSessionManager:
     def save_chat_record(self, session_id: str, user_name: str, message: str, response: str):
         """대화 기록 저장"""
         try:
-            conn = psycopg2.connect(self.connection_string)
+            conn = psycopg.connect(self.connection_string)
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO chat_sessions (session_id, user_name, message, response) 
@@ -121,7 +122,7 @@ class PostgreSQLSessionManager:
     def get_sessions_info(self):
         """전체 세션 정보 조회"""
         try:
-            conn = psycopg2.connect(self.connection_string)
+            conn = psycopg.connect(self.connection_string)
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT session_id, COUNT(*) as message_count, 
@@ -182,9 +183,9 @@ class RAGEngine:
         use_postgresql = os.getenv("USE_POSTGRESQL", "false").lower() == "true"
         
         if use_postgresql:
-            # PostgreSQL 연결 문자열 (public 스키마와 dungeontalk_rag 포함)
+            # PostgreSQL 연결 문자열 (스키마 분리)
             base_connection = f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
-            connection_string = f"{base_connection}?options=-csearch_path%3Ddungeontalk_rag%2Cpublic"
+            connection_string = f"{base_connection}?options=-csearch_path%3Ddungeontalk_rag"
             
             self.vectorstore = PGVector(
                 embeddings=self.embeddings,
