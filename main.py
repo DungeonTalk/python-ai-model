@@ -2,7 +2,6 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from langchain_postgres.vectorstores import PGVector
-from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import OpenAIEmbeddings
 # psycopg2 대신 psycopg (v3) 사용 - 이미 langchain-postgres에 포함됨
@@ -180,28 +179,17 @@ class RAGEngine:
             )
             print("[INFO] 로컬 HuggingFace 임베딩 사용")
         
-        # PostgreSQL PGVector 사용 여부 확인
-        use_postgresql = os.getenv("USE_POSTGRESQL", "false").lower() == "true"
+        # PostgreSQL PGVector 벡터스토어 사용
+        base_connection = f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
+        connection_string = f"{base_connection}?options=-csearch_path%3Ddungeontalk_rag%2Cpublic"
         
-        if use_postgresql:
-            # PostgreSQL 연결 문자열 (스키마 분리)
-            base_connection = f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
-            connection_string = f"{base_connection}?options=-csearch_path%3Ddungeontalk_rag%2Cpublic"
-            
-            self.vectorstore = PGVector(
-                embeddings=self.embeddings,
-                connection=connection_string,
-                collection_name="documents",
-                distance_strategy="cosine"
-            )
-            print("[INFO] PostgreSQL PGVector 벡터스토어 사용")
-        else:
-            # ChromaDB 백업 사용
-            self.vectorstore = Chroma(
-                persist_directory="./vectorstore_openai",
-                embedding_function=self.embeddings
-            )
-            print("[INFO] ChromaDB 벡터스토어 사용")
+        self.vectorstore = PGVector(
+            embeddings=self.embeddings,
+            connection=connection_string,
+            collection_name="documents",
+            distance_strategy="cosine"
+        )
+        print("[INFO] PostgreSQL PGVector 벡터스토어 사용")
         
         # 환경변수에서 LLM 제공자 선택
         llm_provider = os.getenv("LLM_PROVIDER", "ollama").lower()
