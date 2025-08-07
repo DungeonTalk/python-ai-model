@@ -1,9 +1,10 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from langchain_postgres.vectorstores import PGVector
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import OpenAIEmbeddings
+# psycopg2 대신 psycopg (v3) 사용 - 이미 langchain-postgres에 포함됨
 import psycopg
 from langchain_ollama import OllamaLLM
 from langchain_anthropic import ChatAnthropic
@@ -16,9 +17,7 @@ import shutil
 import glob
 import hashlib
 import json
-import time
 from dotenv import load_dotenv
-from typing import List, Optional
 
 load_dotenv()
 
@@ -45,7 +44,114 @@ except ValueError as e:
     print("[ERROR] .env 파일을 확인하고 올바른 API 키를 설정해주세요.")
     exit(1)
 
-app = FastAPI(title="던전톡 AI 응답 서비스")
+app = FastAPI(title="던전톡 RAG API")
+
+class PostgreSQLSessionManager:
+    """PostgreSQL 기반 세션별 대화 기록 관리 클래스"""
+    
+    def __init__(self):
+        base_connection = f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
+        self.connection_string = f"{base_connection}?options=-csearch_path%3Ddungeontalk_rag"
+        self._init_db()
+    
+    def _init_db(self):
+        """데이터베이스 연결 및 테이블 초기화"""
+        try:
+            conn = psycopg.connect(self.connection_string)
+            with conn.cursor() as cur:
+                # sessions 테이블이 없으면 생성
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS chat_sessions (
+                        id SERIAL PRIMARY KEY,
+                        session_id VARCHAR(255) NOT NULL,
+                        user_name VARCHAR(255) NOT NULL,
+                        message TEXT NOT NULL,
+                        response TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                conn.commit()
+            conn.close()
+            print("[INFO] PostgreSQL 세션 매니저 초기화 완료")
+        except Exception as e:
+            print(f"[ERROR] PostgreSQL 세션 매니저 초기화 실패: {e}")
+    
+    def get_history(self, session_id: str, limit: int = 10) -> list:
+        """세션 대화 기록 조회"""
+        try:
+            conn = psycopg.connect(self.connection_string)
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT user_name, message, response, created_at 
+                    FROM chat_sessions 
+                    WHERE session_id = %s 
+                    ORDER BY created_at DESC 
+                    LIMIT %s
+                """, (session_id, limit))
+                
+                results = cur.fetchall()
+                history = []
+                for row in results:
+                    history.append({
+                        "user": row[0],
+                        "message": row[1],
+                        "response": row[2],
+                        "timestamp": row[3]
+                    })
+                
+            conn.close()
+            return list(reversed(history))  # 시간순 정렬
+        except Exception as e:
+            print(f"[ERROR] 세션 히스토리 조회 실패: {e}")
+            return []
+    
+    def save_chat_record(self, session_id: str, user_name: str, message: str, response: str):
+        """대화 기록 저장"""
+        try:
+            conn = psycopg.connect(self.connection_string)
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO chat_sessions (session_id, user_name, message, response) 
+                    VALUES (%s, %s, %s, %s)
+                """, (session_id, user_name, message, response))
+                conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"[ERROR] 세션 저장 실패: {e}")
+    
+    def get_sessions_info(self):
+        """전체 세션 정보 조회"""
+        try:
+            conn = psycopg.connect(self.connection_string)
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT session_id, COUNT(*) as message_count, 
+                           STRING_AGG(DISTINCT user_name, ', ') as users,
+                           MAX(created_at) as last_activity
+                    FROM chat_sessions 
+                    GROUP BY session_id
+                """)
+                
+                results = cur.fetchall()
+                sessions_info = {}
+                for row in results:
+                    sessions_info[row[0]] = {
+                        "message_count": row[1],
+                        "users": row[2].split(', ') if row[2] else [],
+                        "last_activity": row[3]
+                    }
+                
+            conn.close()
+            return {
+                "total_sessions": len(sessions_info),
+                "sessions": sessions_info
+            }
+        except Exception as e:
+            print(f"[ERROR] 세션 정보 조회 실패: {e}")
+            return {"total_sessions": 0, "sessions": {}}
+
+# 세션 매니저 인스턴스 생성
+session_manager = PostgreSQLSessionManager()
 
 app.add_middleware(
     CORSMiddleware,
@@ -161,26 +267,23 @@ class RAGEngine:
         # 파일 해시 업데이트
         self.update_file_hash(file_path)
     
-    def generate_ai_response(self, context_messages: List[dict], current_user: str, current_message: str):
-        """Spring Boot에서 전달받은 컨텍스트로 AI 응답 생성"""
-        start_time = time.time()
-        
-        # 컨텍스트 구성
+    def query(self, question: str, session_history: list = None, current_user: str = None):
+        # 이전 대화 기록을 문맥으로 구성
         context = ""
-        if context_messages:
+        if session_history:
+            # 최근 대화 개수 설정
+            recent_chat_count = int(os.getenv("RECENT_CHAT_COUNT", "5"))
             context = "\n이전 대화 기록:\n"
-            for msg in context_messages:
-                if msg.get('messageType') == 'USER':
-                    context += f"- {msg.get('senderNickname')}: {msg.get('content')}\n"
-                elif msg.get('messageType') == 'AI':
-                    context += f"  GM: {msg.get('content')[:150]}...\n"
+            for record in session_history[-recent_chat_count:]:  # 최근 N개만 사용
+                context += f"- {record['user']}: {record['message']}\n"
+                context += f"  GM: {record['response'][:100]}...\n"
         
         trpg_question = f"""당신은 TRPG GM입니다. 다중 플레이어 게임을 진행해주세요.
 
 {context}
 
 현재 발언자: {current_user}
-새로운 질문/행동: {current_message}
+새로운 질문/행동: {question}
 
 # 답변 형식 규칙:
 1. 이전 대화 맥락을 고려하여 일관성 있게 답변해주세요
@@ -194,14 +297,11 @@ class RAGEngine:
 9. 상황 묘사와 대화는 구분해서 작성해주세요
 10. 필요시 다른 파티원들에게도 행동을 촉구해주세요 """
         
+        
         result = self.qa_chain.invoke({"query": trpg_question})
         
-        end_time = time.time()
-        response_time = int((end_time - start_time) * 1000)  # 밀리초
-        
         return {
-            "content": result["result"],
-            "response_time": response_time,
+            "answer": result["result"],
             "sources": [doc.page_content[:100] + "..."
                        for doc in result["source_documents"]]
         }
@@ -307,59 +407,63 @@ class RAGEngine:
 
 rag = RAGEngine()
 
-# Spring Boot 연동용 데이터 모델들
-class ContextMessage(BaseModel):
-    messageType: str  # USER, AI, SYSTEM
-    senderNickname: str
-    content: str
-    turnNumber: int
-    messageOrder: int
+class ChatRequest(BaseModel):
+    session_id: str
+    user_name: str
+    message: str
 
-class AiResponseRequest(BaseModel):
-    game_id: str
-    ai_game_room_id: str
-    current_user: str
-    current_message: str
-    context_messages: List[ContextMessage] = []
-    turn_number: int
+class ChatResponse(BaseModel):
+    response: str
+    sources: list = []
+    session_id: str
 
-class AiResponseResult(BaseModel):
-    content: str
-    response_time: int  # milliseconds
-    sources: List[str] = []
+def get_session_history(session_id: str) -> list:
+    """세션 대화 기록 조회"""
+    return session_manager.get_history(session_id)
 
-# Spring Boot에서 호출하는 AI 응답 생성 엔드포인트
-@app.post("/ai-response", response_model=AiResponseResult)
-async def generate_ai_response(request: AiResponseRequest):
-    """Spring Boot AiResponseController에서 호출하는 AI 응답 생성 API"""
+def save_chat_record(session_id: str, user_name: str, message: str, response: str):
+    """대화 기록 저장"""
+    session_manager.save_chat_record(session_id, user_name, message, response)
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
     try:
-        print(f"[INFO] AI 응답 생성 요청 - 게임방: {request.ai_game_room_id}, 사용자: {request.current_user}, 턴: {request.turn_number}")
+        print(f"[DEBUG] 채팅 요청 - 세션: {request.session_id}, 사용자: {request.user_name}")
+        
+        # 세션 기록 조회
+        session_history = get_session_history(request.session_id)
         
         # AI 응답 생성
-        result = rag.generate_ai_response(
-            context_messages=[msg.dict() for msg in request.context_messages],
-            current_user=request.current_user,
-            current_message=request.current_message
+        result = rag.query(
+            question=request.message,
+            session_history=session_history,
+            current_user=request.user_name
         )
         
-        print(f"[INFO] AI 응답 생성 완료 - 응답시간: {result['response_time']}ms, 소스: {len(result['sources'])}개")
-        
-        return AiResponseResult(
-            content=result["content"],
-            response_time=result["response_time"],
-            sources=result["sources"]
+        # 대화 기록 저장
+        save_chat_record(
+            session_id=request.session_id,
+            user_name=request.user_name,
+            message=request.message,
+            response=result["answer"]
         )
         
+        print(f"[DEBUG] 응답 성공 - 세션 대화 수: {len(session_manager.get_history(request.session_id))}")
+        
+        return ChatResponse(
+            response=result["answer"],
+            sources=result["sources"],
+            session_id=request.session_id
+        )
     except Exception as e:
-        print(f"[ERROR] AI 응답 생성 실패: {str(e)}")
+        print(f"[ERROR] 채팅 처리 중 오류: {str(e)}")
+        print(f"[ERROR] 오류 타입: {type(e)}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"AI 응답 생성 실패: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-# 문서 관리 엔드포인트들은 유지
 @app.post("/upload")
 async def upload_document(file: UploadFile = File(...)):
-    """게임 설정 문서 업로드"""
     try:
         file_path = f"./documents/{file.filename}"
         os.makedirs("./documents", exist_ok=True)
@@ -373,44 +477,41 @@ async def upload_document(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/health")
+async def health():
+    return {"status": "healthy"}
+
 @app.post("/rescan")
 async def rescan_documents():
-    """documents 폴더를 다시 스캔하고 새로운/변경된 파일들을 임베딩"""
+    """documents 폴더를 다시 스캔하고 새로운/변경된 파일들을 임베딩합니다."""
     try:
         rag.rescan_documents()
         return {"message": "documents 폴더 재스캔 완료"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/health")
-async def health():
-    """서비스 상태 확인"""
-    return {
-        "status": "healthy",
-        "service": "dungeontalk-ai-service",
-        "llm_provider": os.getenv("LLM_PROVIDER", "ollama")
-    }
+@app.get("/sessions")
+async def get_active_sessions():
+    """활성 세션 목록 조회"""
+    return session_manager.get_sessions_info()
 
-@app.get("/")
-async def root():
-    """API 정보"""
+@app.get("/sessions/{session_id}/history")
+async def get_session_history_endpoint(session_id: str):
+    """특정 세션의 대화 기록 조회"""
+    history = get_session_history(session_id)
+    if not history:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다")
+    
     return {
-        "service": "던전톡 AI 응답 서비스",
-        "version": "2.0.0",
-        "description": "Spring Boot와 연동되는 AI 응답 전용 서비스",
-        "endpoints": {
-            "ai_response": "/ai-response",
-            "upload": "/upload", 
-            "rescan": "/rescan",
-            "health": "/health"
-        }
+        "session_id": session_id,
+        "message_count": len(history),
+        "history": history
     }
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("AI_SERVICE_PORT", "8001"))  # 포트 변경
-    host = os.getenv("AI_SERVICE_HOST", "0.0.0.0")
+    port = int(os.getenv("API_PORT", "8000"))
+    host = os.getenv("API_HOST", "0.0.0.0")
     
-    print(f"[INFO] AI 서비스 시작 - {host}:{port}")
-    print("[INFO] Spring Boot와 연동되는 AI 응답 전용 서비스")
+    print(f"[INFO] 서버 시작 - {host}:{port}")
     uvicorn.run(app, host=host, port=port)
