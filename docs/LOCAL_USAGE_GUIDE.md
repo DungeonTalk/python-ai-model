@@ -30,7 +30,19 @@
 
 ## 🛠 설치 가이드
 
-### 1단계: 프로젝트 클론/다운로드
+### 1단계: uv 설치
+
+**Windows (PowerShell)**
+```powershell
+irm https://astral.sh/uv/install.ps1 | iex
+```
+
+**macOS/Linux**
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+### 2단계: 프로젝트 클론/다운로드
 ```bash
 # Git이 있는 경우
 git clone <repository-url>
@@ -39,34 +51,42 @@ cd dungeontalk-mvp
 # 또는 ZIP 파일 다운로드 후 압축 해제
 ```
 
-### 2단계: Python 환경 확인
+### 3단계: 의존성 자동 설치
 ```bash
-python --version
-# Python 3.8+ 확인
-```
-
-### 3단계: 자동 설치 (Windows)
-```cmd
-# setup.bat 실행
+# uv로 자동 의존성 설치 (pyproject.toml 기반)
+uv sync
 setup.bat
 ```
 
-### 3단계: 수동 설치 (모든 OS)
+### 4단계: 환경 변수 설정
 ```bash
-# UV 패키지 매니저 설치 (10배 빠름)
-pip install uv
+# .env 파일 생성 (아래 환경 설정 섹션 참조)
+cp .env.example .env
+# .env 파일을 편집하여 API 키들을 설정하세요
+```
 
-# 가상환경 생성
-uv venv
+### 5단계: PostgreSQL 설정 (선택사항)
+```bash
+# PostgreSQL + pgvector 컨테이너 실행
+docker run -d \
+  --name postgres-pgvector \
+  -e POSTGRES_USER=root \
+  -e POSTGRES_PASSWORD=1234 \
+  -e POSTGRES_DB=dungeondb \
+  -p 5432:5432 \
+  pgvector/pgvector:pg17
 
-# 가상환경 활성화
-# Windows:
-.venv\Scripts\activate
-# macOS/Linux:
-source .venv/bin/activate
-
-# 의존성 설치
-uv pip install -r requirements.txt
+# 스키마 설정 (최초 한 번만)
+uv run python -c "
+import psycopg2
+conn = psycopg2.connect('postgresql://root:1234@localhost:5432/dungeondb')
+cur = conn.cursor()
+cur.execute('CREATE SCHEMA IF NOT EXISTS dungeontalk_rag;')
+cur.execute('CREATE EXTENSION IF NOT EXISTS vector SCHEMA public;')
+conn.commit()
+conn.close()
+print('PostgreSQL 설정 완료')
+"
 ```
 
 ---
@@ -113,24 +133,25 @@ DOCUMENTS_PATH=./documents
 
 ## 🚀 서버 실행 방법
 
-### 방법 1: 직접 실행
+### 방법 1: uv로 직접 실행 (권장)
 ```bash
-# 가상환경 활성화
-.venv\Scripts\activate    # Windows
-source .venv/bin/activate # macOS/Linux
-
-# 서버 시작
-python main.py
+# uv를 사용한 실행 (가상환경 자동 관리)
+uv run python main.py
 ```
 
-### 방법 2: 백그라운드 실행 (Windows)
-```cmd
-start /b .venv\Scripts\python.exe main.py
+### 방법 2: 개발 모드 실행
+```bash
+# 개발 모드 (자동 재로드)
+uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### 방법 3: nohup 사용 (macOS/Linux)
+### 방법 3: 백그라운드 실행
 ```bash
-nohup python main.py &
+# Windows (PowerShell)
+Start-Process -NoNewWindow "uv" -ArgumentList "run", "python", "main.py"
+
+# macOS/Linux
+nohup uv run python main.py &
 ```
 
 ### 서버 확인
@@ -144,8 +165,8 @@ nohup python main.py &
 
 ### 1. 웹 UI 사용 (권장)
 ```bash
-# Streamlit 앱 실행
-streamlit run streamlit_app.py
+# Streamlit 앱 실행 (uv 환경에서)
+uv run streamlit run streamlit_app.py
 ```
 - 브라우저에서 http://localhost:8501 자동 열림
 - 채팅 인터페이스로 TRPG 게임 진행

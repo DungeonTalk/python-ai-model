@@ -29,9 +29,8 @@ cp .env.example .env
 ANTHROPIC_API_KEY=sk-ant-api03-your-api-key-here
 LLM_PROVIDER=claude
 
-# 3. 서버 시작
-python main.py
-# 또는 uv 사용시: uv run python main.py
+# 3. 서버 시작 (uv 환경)
+uv run python main.py
 ```
 
 ### 1.2 서버 상태 확인

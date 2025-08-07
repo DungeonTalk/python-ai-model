@@ -54,13 +54,10 @@ fi
 uv_version=$(uv --version)
 echo -e "${GREEN}${uv_version} 발견됨${NC}"
 
-echo -e "${BLUE}3. 가상환경 생성 중 (UV 고속)...${NC}"
-uv venv
+echo -e "${BLUE}3. 프로젝트 의존성 설치 중 (pyproject.toml 기반)...${NC}"
+uv sync
 
-echo -e "${BLUE}4. 패키지 설치 중 (UV 터보 모드)...${NC}"
-uv pip install -r requirements.txt
-
-echo -e "${BLUE}5. 환경 변수 파일 확인 중...${NC}"
+echo -e "${BLUE}4. 환경 변수 파일 확인 중...${NC}"
 if [ ! -f .env ]; then
     echo -e "${YELLOW}.env 파일이 없습니다.${NC}"
     if [ -f .env.example ]; then
@@ -75,7 +72,7 @@ else
     echo -e "${GREEN}.env 파일 발견됨${NC}"
 fi
 
-echo -e "${BLUE}6. documents 폴더 확인 중...${NC}"
+echo -e "${BLUE}5. documents 폴더 확인 중...${NC}"
 if [ ! -d "documents" ]; then
     mkdir documents
     echo -e "${GREEN}documents 폴더 생성됨${NC}"
@@ -92,8 +89,11 @@ echo ""
 echo -e "${BLUE}Streamlit 웹 UI 실행:${NC}"  
 echo "  uv run streamlit run streamlit_app.py"
 echo ""
-echo -e "${BLUE}가상환경 활성화 (선택사항):${NC}"
-echo "  source .venv/bin/activate"
+echo -e "${BLUE}PostgreSQL 설정 (필요시):${NC}"
+echo "  docker run -d --name postgres-pgvector \\"
+echo "    -e POSTGRES_USER=root -e POSTGRES_PASSWORD=1234 \\"
+echo "    -e POSTGRES_DB=dungeondb -p 5432:5432 \\"
+echo "    pgvector/pgvector:pg17"
 echo ""
 echo -e "${YELLOW}참고: API 키 설정을 잊지 마세요!${NC}"
 echo "  nano .env"

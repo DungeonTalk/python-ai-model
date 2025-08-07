@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from langchain_postgres.vectorstores import PGVector
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import OpenAIEmbeddings
-import psycopg2
+# psycopg2 대신 psycopg (v3) 사용 - 이미 langchain-postgres에 포함됨
 from langchain_ollama import OllamaLLM
 from langchain_anthropic import ChatAnthropic
 from langchain_openai import ChatOpenAI
@@ -182,9 +182,9 @@ class RAGEngine:
         use_postgresql = os.getenv("USE_POSTGRESQL", "false").lower() == "true"
         
         if use_postgresql:
-            # PostgreSQL 연결 문자열 (스키마 분리)
+            # PostgreSQL 연결 문자열 (public 스키마와 dungeontalk_rag 포함)
             base_connection = f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
-            connection_string = f"{base_connection}?options=-csearch_path%3Ddungeontalk_rag"
+            connection_string = f"{base_connection}?options=-csearch_path%3Ddungeontalk_rag%2Cpublic"
             
             self.vectorstore = PGVector(
                 embeddings=self.embeddings,

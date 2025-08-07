@@ -12,9 +12,9 @@ services:
   postgres:
     image: postgres:17-alpine          # ❌ pgvector 확장 없음
     ports:
-      - "5432:5432"                   # ❌ 포트 충돌 (우리는 5433 사용)
+      - "5432:5432"                   # ✅ 표준 포트 사용
     environment:
-      POSTGRES_DB: dungeondb          # ❌ 다른 DB 이름
+      POSTGRES_DB: dungeondb          # ✅ 동일한 DB 이름
   
   mongo: ...                          # 🤔 RAG 시스템에는 불필요
   valkey-session: ...                 # 🤔 PostgreSQL 세션으로 대체 가능
@@ -25,9 +25,9 @@ services:
 ```yaml
 services:
   postgres:
-    image: pgvector/pgvector:pg16     # ✅ pgvector 지원
+    image: pgvector/pgvector:pg17     # ✅ pgvector 지원
     ports:
-      - "5433:5432"                   # ✅ 기존 시스템과 호환
+      - "5432:5432"                   # ✅ 표준 포트
     environment:
       POSTGRES_DB: rag_db             # ✅ RAG 전용 DB
 ```
@@ -78,12 +78,12 @@ services:
     image: pgvector/pgvector:pg16
     container_name: dgt-postgres-rag
     ports:
-      - "5433:5432"
+      - "5432:5432"
     environment:
       TZ: Asia/Seoul
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: rag_db
+      POSTGRES_DB: dungeondb
     volumes:
       - ./postgres/data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -213,16 +213,16 @@ docker-compose logs postgres
 ### Phase 3: pgvector 확인
 ```bash
 # pgvector 확장 확인
-docker exec -it dgt-postgres-rag psql -U postgres -d rag_db -c "SELECT * FROM pg_extension WHERE extname='vector';"
+docker exec -it postgres-pgvector psql -U root -d dungeondb -c "SELECT * FROM pg_extension WHERE extname='vector';"
 
 # 테이블 생성 확인
-docker exec -it dgt-postgres-rag psql -U postgres -d rag_db -c "\dt"
+docker exec -it postgres-pgvector psql -U root -d dungeondb -c "\dt"
 ```
 
 ### Phase 4: RAG 시스템 테스트
 ```bash
-# Python 서버 시작
-python main.py
+# Python 서버 시작 (uv 환경)
+uv run python main.py
 
 # 헬스체크
 curl http://localhost:8000/health

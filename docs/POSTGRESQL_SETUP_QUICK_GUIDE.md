@@ -108,7 +108,8 @@ python main.py
 
 4. **애플리케이션 테스트**
    ```bash
-   python main.py
+   # uv 환경에서 테스트
+   uv run python main.py
    ```
 
 ## 🚨 문제 해결

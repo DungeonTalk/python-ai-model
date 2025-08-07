@@ -148,6 +148,12 @@ self.vectorstore = PGVector(
 5. **현재 프로젝트 .env 파일 수정**
    - 연결 정보를 새로운 PostgreSQL에 맞게 수정
 
+6. **애플리케이션 실행 및 테스트**
+   ```bash
+   # uv 환경에서 실행
+   uv run python main.py
+   ```
+
 6. **애플리케이션 코드 수정**
    - `main.py`에서 스키마 분리 설정 추가
 

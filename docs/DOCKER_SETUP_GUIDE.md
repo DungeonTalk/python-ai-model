@@ -8,10 +8,10 @@
 
 ### 사용 중인 컨테이너
 ```yaml
-Container Name: postgres-rag
-Image: pgvector/pgvector:pg16
-Port Mapping: 5433:5432
-Database: rag_db
+Container Name: postgres-pgvector
+Image: pgvector/pgvector:pg17
+Port Mapping: 5432:5432
+Database: dungeondb
 Status: ✅ 실행 중
 ```
 
@@ -20,22 +20,22 @@ Status: ✅ 실행 중
 ### 1단계: pgvector PostgreSQL 컨테이너 실행
 
 ```bash
-# pgvector 지원 PostgreSQL 16 컨테이너 실행
+# pgvector 지원 PostgreSQL 17 컨테이너 실행
 docker run -d \
-  --name postgres-rag \
-  -p 5433:5432 \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=rag_db \
+  --name postgres-pgvector \
+  -p 5432:5432 \
+  -e POSTGRES_USER=root \
+  -e POSTGRES_PASSWORD=1234 \
+  -e POSTGRES_DB=dungeondb \
   -v $(pwd)/postgres-data:/var/lib/postgresql/data \
-  pgvector/pgvector:pg16
+  pgvector/pgvector:pg17
 ```
 
 ### 2단계: pgvector 확장 활성화
 
 ```bash
 # 컨테이너에 접속
-docker exec -it postgres-rag psql -U postgres -d rag_db
+docker exec -it postgres-pgvector psql -U root -d dungeondb
 
 # pgvector 확장 생성
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -136,17 +136,18 @@ ON CONFLICT DO NOTHING;
 ### 개발 환경
 ```bash
 # 간단한 실행
-docker run -d --name postgres-rag \
-  -p 5433:5432 \
-  -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=rag_db \
-  pgvector/pgvector:pg16
+docker run -d --name postgres-pgvector \
+  -p 5432:5432 \
+  -e POSTGRES_USER=root \
+  -e POSTGRES_PASSWORD=1234 \
+  -e POSTGRES_DB=dungeondb \
+  pgvector/pgvector:pg17
 ```
 
 ### 운영 환경
 ```bash
 # 영구 볼륨과 보안 설정
-docker run -d --name postgres-rag \
+docker run -d --name postgres-pgvector \
   -p 5433:5432 \
   -e POSTGRES_USER=rag_user \
   -e POSTGRES_PASSWORD=${SECURE_PASSWORD} \
@@ -208,24 +209,33 @@ except Exception as e:
 ### 백업 및 복원
 ```bash
 # 데이터베이스 백업
-docker exec postgres-rag pg_dump -U postgres rag_db > rag_db_backup.sql
+docker exec postgres-pgvector pg_dump -U root dungeondb > dungeondb_backup.sql
 
 # 데이터베이스 복원
-docker exec -i postgres-rag psql -U postgres rag_db < rag_db_backup.sql
+docker exec -i postgres-pgvector psql -U root dungeondb < dungeondb_backup.sql
 
 # 볼륨 백업
-docker run --rm -v postgres-rag_data:/data -v $(pwd):/backup alpine tar czf /backup/postgres_backup.tar.gz /data
+docker run --rm -v postgres-pgvector_data:/data -v $(pwd):/backup alpine tar czf /backup/postgres_backup.tar.gz /data
 ```
 
 ### 데이터 초기화
 ```bash
 # 기존 데이터 삭제 후 재시작
-docker stop postgres-rag
-docker rm postgres-rag
-docker volume rm postgres-rag_data  # 주의: 모든 데이터 삭제!
+docker stop postgres-pgvector
+docker rm postgres-pgvector
+docker volume rm postgres-pgvector_data  # 주의: 모든 데이터 삭제!
 
 # 새로 시작
-docker run -d --name postgres-rag [... 기존 명령어]
+uv run python -c "
+import psycopg2
+conn = psycopg2.connect('postgresql://root:1234@localhost:5432/dungeondb')
+cur = conn.cursor()
+cur.execute('CREATE SCHEMA IF NOT EXISTS dungeontalk_rag;')
+cur.execute('CREATE EXTENSION IF NOT EXISTS vector SCHEMA public;')
+conn.commit()
+conn.close()
+print('프로젝트 초기화 완료')
+"
 ```
 
 ## 🚨 트러블슈팅

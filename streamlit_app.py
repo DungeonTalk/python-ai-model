@@ -27,8 +27,8 @@ with st.sidebar:
     # 모델 선택
     llm_provider = st.selectbox(
         "사용할 AI 모델",
-        ["claude", "ollama"],
-        help="Claude는 더 창의적이지만 유료, Ollama는 무료이지만 성능 제한"
+        ["deepseek", "claude", "openai"],
+        help="DeepSeek: 고성능/저렴, Claude: 창의적/고품질, OpenAI: 범용/안정적"
     )
     
     # 환경변수 업데이트
@@ -45,7 +45,7 @@ with st.sidebar:
                 else:
                     f.write(line)
         
-        st.success(f"모델을 {llm_provider}로 변경했습니다! FastAPI 서버를 재시작해주세요.")
+        st.success(f"모델을 {llm_provider}로 변경했습니다! uv run python main.py로 서버를 재시작해주세요.")
     
     st.markdown("---")
     
@@ -156,7 +156,7 @@ with col1:
                         })
                         
                 except Exception as e:
-                    error_msg = f"❌ 연결 오류: {e}\n\nFastAPI 서버가 실행 중인지 확인해주세요."
+                    error_msg = f"❌ 연결 오류: {e}\n\n'uv run python main.py'로 서버가 실행 중인지 확인해주세요."
                     st.error(error_msg)
                     st.session_state.messages.append({
                         "role": "assistant", 
@@ -181,11 +181,13 @@ with col2:
         st.error(f"🔴 연결 오류: {e}")
     
     # 현재 모델 표시
-    current_model = os.getenv("LLM_PROVIDER", "ollama")
+    current_model = os.getenv("LLM_PROVIDER", "deepseek")
     if current_model == "claude":
-        st.info("🤖 현재 모델: Claude (고품질)")
+        st.info("🤖 현재 모델: Claude (창의적/고품질)")
+    elif current_model == "openai":
+        st.info("🤖 현재 모델: OpenAI (범용/안정적)")
     else:
-        st.info("🤖 현재 모델: Ollama (로컬)")
+        st.info("🤖 현재 모델: DeepSeek (고성능/저렴)")
     
     st.markdown("---")
     
@@ -229,7 +231,8 @@ st.markdown(
     """
     <div style='text-align: center'>
         <p>🎲 던전톡 RAG MVP - TRPG AI 어시스턴트</p>
-        <p>Claude API + LangChain + ChromaDB로 구동됩니다</p>
+        <p>Multi-LLM + LangChain + PostgreSQL pgvector로 구동됩니다</p>
+        <p>🚀 <strong>uv</strong> 환경으로 최적화됨</p>
     </div>
     """, 
     unsafe_allow_html=True
