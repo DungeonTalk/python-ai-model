@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.116.1",
-    "langchain-core>=0.3.27",
+    "langchain>=0.3.27",
     "langchain-anthropic>=0.3.18",
     "langchain-openai>=0.3.28",
     "langchain-postgres>=0.0.15",
