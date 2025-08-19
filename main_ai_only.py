@@ -1,18 +1,13 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from langchain_postgres.vectorstores import PGVector
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_anthropic import ChatAnthropic
-import psycopg
 from langchain.chains import RetrievalQA
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 import os
-import shutil
-import glob
-import hashlib
-import json
 import time
 from dotenv import load_dotenv
 from typing import List, Optional
@@ -68,12 +63,8 @@ class RAGEngine:
             raise ValueError("로컬 임베딩 지원이 제거되었습니다. OpenAI 임베딩을 사용하세요.")
         
         # PostgreSQL PGVector 벡터스토어 사용 (재시도 로직 포함)
-        print(f"[DEBUG] PostgreSQL 환경변수 - HOST: {os.getenv('POSTGRES_HOST')}, PORT: {os.getenv('POSTGRES_PORT')}, DB: {os.getenv('POSTGRES_DB')}, USER: {os.getenv('POSTGRES_USER')}")
-        
         base_connection = f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
         connection_string = f"{base_connection}?options=-csearch_path%3Ddungeontalk_rag%2Cpublic"
-        
-        print(f"[DEBUG] 연결 문자열: postgresql://{os.getenv('POSTGRES_USER')}:***@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}")
         
         # PostgreSQL 연결 재시도
         max_retries = 5
@@ -81,7 +72,6 @@ class RAGEngine:
         
         for attempt in range(max_retries):
             try:
-                print(f"[INFO] PostgreSQL 연결 시도 {attempt + 1}/{max_retries}...")
                 self.vectorstore = PGVector(
                     embeddings=self.embeddings,
                     connection=connection_string,
@@ -91,13 +81,11 @@ class RAGEngine:
                 print("[INFO] PostgreSQL PGVector 벡터스토어 연결 성공")
                 break
             except Exception as e:
-                print(f"[ERROR] PostgreSQL 연결 실패 (시도 {attempt + 1}): {e}")
                 if attempt < max_retries - 1:
-                    print(f"[INFO] {retry_delay}초 후 재시도...")
                     time.sleep(retry_delay)
-                    retry_delay *= 2  # 지수 백오프
+                    retry_delay *= 2
                 else:
-                    print("[ERROR] PostgreSQL 연결을 포기합니다. 환경변수를 확인하세요.")
+                    print(f"[ERROR] PostgreSQL 연결 실패: {e}")
                     raise
         
         # 환경변수에서 LLM 제공자 선택
@@ -148,8 +136,6 @@ class RAGEngine:
         # 파일 해시 추적을 위한 경로
         self.hash_file = "./vectorstore_openai/file_hashes.json"
         
-        # 서버 시작시 자동으로 documents 폴더 스캔
-        self.auto_embed_documents()
     
     def add_document(self, file_path: str):
         """문서를 벡터스토어에 추가 (다양한 인코딩 지원)"""
