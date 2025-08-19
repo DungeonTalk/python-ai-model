@@ -178,7 +178,7 @@ class RAGEngine:
         self.vectorstore.add_documents(texts)
         
     
-    def generate_ai_response(self, context_messages: List[dict], current_user: str, current_message: str):
+    def generate_ai_response(self, context_messages: List[dict], current_user: str, current_message: str, game_settings: str = ""):
         """Spring Boot에서 전달받은 컨텍스트로 AI 응답 생성"""
         start_time = time.time()
         
@@ -192,24 +192,31 @@ class RAGEngine:
                 elif msg.get('messageType') == 'AI':
                     context += f"  GM: {msg.get('content')[:150]}...\n"
         
+        # 세계관 설정이 있으면 포함
+        world_setting = ""
+        if game_settings:
+            world_setting = f"\n# 게임 세계관:\n{game_settings}\n"
+            print(f"[INFO] 세계관 설정 적용: {game_settings}")
+        
         trpg_question = f"""당신은 TRPG GM입니다. 다중 플레이어 게임을 진행해주세요.
-
+{world_setting}
 {context}
 
 현재 발언자: {current_user}
 새로운 질문/행동: {current_message}
 
 # 답변 형식 규칙:
-1. 이전 대화 맥락을 고려하여 일관성 있게 답변해주세요
-2. 현재 발언자({current_user})의 행동에 초점을 맞춰 답변해주세요
-3. 다른 파티원들도 고려한 상황 묘사를 해주세요
-4. 상황을 생생하게 묘사하고, 플레이어의 행동에 따라 스토리를 전개시킵니다
-5. 각 세계관의 분위기에 맞는 몰입감 있는 롤플레잉을 제공합니다
-6. 문장과 문장 사이에는 적절한 줄바꿈을 넣어주세요
-7. 긴 설명은 문단으로 나누어 가독성을 높여주세요
-8. 중요한 정보나 선택지는 별도 줄로 구분해주세요
-9. 상황 묘사와 대화는 구분해서 작성해주세요
-10. 필요시 다른 파티원들에게도 행동을 촉구해주세요 """
+1. 설정된 세계관에 맞는 분위기와 톤으로 답변해주세요
+2. 이전 대화 맥락을 고려하여 일관성 있게 답변해주세요
+3. 현재 발언자({current_user})의 행동에 초점을 맞춰 답변해주세요
+4. 다른 파티원들도 고려한 상황 묘사를 해주세요
+5. 상황을 생생하게 묘사하고, 플레이어의 행동에 따라 스토리를 전개시킵니다
+6. 각 세계관의 분위기에 맞는 몰입감 있는 롤플레잉을 제공합니다
+7. 문장과 문장 사이에는 적절한 줄바꿈을 넣어주세요
+8. 긴 설명은 문단으로 나누어 가독성을 높여주세요
+9. 중요한 정보나 선택지는 별도 줄로 구분해주세요
+10. 상황 묘사와 대화는 구분해서 작성해주세요
+11. 필요시 다른 파티원들에게도 행동을 촉구해주세요 """
         
         result = self.qa_chain.invoke({"query": trpg_question})
         
@@ -270,6 +277,7 @@ class AiResponseRequest(BaseModel):
     current_message: str
     context_messages: List[ContextMessage] = []
     turn_number: int
+    game_settings: str = ""
 
 class AiResponseResult(BaseModel):
     content: str
@@ -285,9 +293,10 @@ async def generate_ai_response(request: AiResponseRequest):
         
         # AI 응답 생성
         result = rag.generate_ai_response(
-            context_messages=[msg.dict() for msg in request.context_messages],
+            context_messages=[msg.model_dump() for msg in request.context_messages],
             current_user=request.current_user,
-            current_message=request.current_message
+            current_message=request.current_message,
+            game_settings=request.game_settings
         )
         
         print(f"[INFO] AI 응답 생성 완료 - 응답시간: {result['response_time']}ms, 소스: {len(result['sources'])}개")
