@@ -10,7 +10,7 @@ from langchain_core.documents import Document
 import os
 import time
 from dotenv import load_dotenv
-from typing import List, Optional
+from typing import List
 
 load_dotenv()
 
@@ -133,8 +133,6 @@ class RAGEngine:
             return_source_documents=True
         )
         
-        # 파일 해시 추적을 위한 경로
-        self.hash_file = "./vectorstore_openai/file_hashes.json"
         
     
     def add_document(self, file_path: str):
@@ -179,8 +177,6 @@ class RAGEngine:
         
         self.vectorstore.add_documents(texts)
         
-        # 파일 해시 업데이트
-        self.update_file_hash(file_path)
     
     def generate_ai_response(self, context_messages: List[dict], current_user: str, current_message: str):
         """Spring Boot에서 전달받은 컨텍스트로 AI 응답 생성"""
@@ -227,55 +223,8 @@ class RAGEngine:
                        for doc in result["source_documents"]]
         }
     
-    def get_file_hash(self, file_path: str) -> str:
-        """파일의 MD5 해시값을 계산합니다."""
-        hash_md5 = hashlib.md5()
-        try:
-            with open(file_path, "rb") as f:
-                for chunk in iter(lambda: f.read(4096), b""):
-                    hash_md5.update(chunk)
-            return hash_md5.hexdigest()
-        except FileNotFoundError:
-            print(f"[ERROR] 파일을 찾을 수 없습니다: {file_path}")
-            return ""
-        except PermissionError:
-            print(f"[ERROR] 파일 접근 권한이 없습니다: {file_path}")
-            return ""
-        except Exception as e:
-            print(f"[ERROR] 파일 해시 계산 실패 ({file_path}): {e}")
-            return ""
-    
-    def load_file_hashes(self) -> dict:
-        """저장된 파일 해시 정보를 로드합니다."""
-        try:
-            if os.path.exists(self.hash_file):
-                with open(self.hash_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-        except json.JSONDecodeError as e:
-            print(f"[ERROR] 해시 파일 JSON 파싱 실패: {e}")
-        except UnicodeDecodeError as e:
-            print(f"[ERROR] 해시 파일 인코딩 오류: {e}")
-        except Exception as e:
-            print(f"[ERROR] 해시 파일 로드 실패: {e}")
-        return {}
-    
-    def save_file_hashes(self, hashes: dict):
-        """파일 해시 정보를 저장합니다."""
-        try:
-            os.makedirs(os.path.dirname(self.hash_file), exist_ok=True)
-            with open(self.hash_file, 'w', encoding='utf-8') as f:
-                json.dump(hashes, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"해시 파일 저장 실패: {e}")
-    
-    def update_file_hash(self, file_path: str):
-        """특정 파일의 해시값을 업데이트합니다."""
-        hashes = self.load_file_hashes()
-        hashes[file_path] = self.get_file_hash(file_path)
-        self.save_file_hashes(hashes)
-    
-    def auto_embed_documents(self):
-        """documents 폴더의 모든 파일을 자동으로 임베딩합니다."""
+    def rescan_documents(self):
+        """documents 폴더를 다시 스캔하고 새로운 파일들을 임베딩합니다."""
         documents_path = "./documents"
         if not os.path.exists(documents_path):
             os.makedirs(documents_path, exist_ok=True)
@@ -284,47 +233,25 @@ class RAGEngine:
         
         # 지원하는 파일 확장자
         supported_extensions = ['.txt', '.md', '.csv']
-        
-        # 기존 해시 정보 로드
-        existing_hashes = self.load_file_hashes()
-        
-        # documents 폴더 스캔
         files_processed = 0
-        files_skipped = 0
         
         print("[SCAN] documents 폴더를 스캔하고 있습니다...")
         
+        import glob
         for ext in supported_extensions:
             pattern = os.path.join(documents_path, f"**/*{ext}")
             for file_path in glob.glob(pattern, recursive=True):
                 try:
-                    # 현재 파일 해시 계산
-                    current_hash = self.get_file_hash(file_path)
-                    
-                    # 이미 처리된 파일인지 확인
-                    if file_path in existing_hashes and existing_hashes[file_path] == current_hash:
-                        files_skipped += 1
-                        continue
-                    
-                    # 새로운 파일이거나 변경된 파일이면 임베딩
                     print(f"[EMBED] 임베딩 중: {file_path}")
                     self.add_document(file_path)
                     files_processed += 1
-                    
                 except Exception as e:
                     print(f"[ERROR] {file_path} 처리 실패: {e}")
         
         if files_processed > 0:
-            print(f"[SUCCESS] {files_processed}개 파일이 새로 임베딩되었습니다.")
-        if files_skipped > 0:
-            print(f"[SKIP] {files_skipped}개 파일은 이미 처리되어 건너뛰었습니다.")
-        
-        if files_processed == 0 and files_skipped == 0:
+            print(f"[SUCCESS] {files_processed}개 파일이 임베딩되었습니다.")
+        else:
             print("[INFO] documents 폴더에 지원되는 파일이 없습니다. (.txt, .md, .csv)")
-    
-    def rescan_documents(self):
-        """documents 폴더를 다시 스캔하고 변경된 파일들을 임베딩합니다."""
-        self.auto_embed_documents()
 
 rag = RAGEngine()
 
@@ -377,22 +304,6 @@ async def generate_ai_response(request: AiResponseRequest):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"AI 응답 생성 실패: {str(e)}")
 
-# 문서 관리 엔드포인트들은 유지
-@app.post("/upload")
-async def upload_document(file: UploadFile = File(...)):
-    """게임 설정 문서 업로드"""
-    try:
-        file_path = f"./documents/{file.filename}"
-        os.makedirs("./documents", exist_ok=True)
-        
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
-        rag.add_document(file_path)
-        
-        return {"message": f"{file.filename} 업로드 완료"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/rescan")
 async def rescan_documents():
@@ -421,7 +332,6 @@ async def root():
         "description": "Spring Boot와 연동되는 AI 응답 전용 서비스",
         "endpoints": {
             "ai_response": "/ai-response",
-            "upload": "/upload", 
             "rescan": "/rescan",
             "health": "/health"
         }
