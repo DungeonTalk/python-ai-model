@@ -2,15 +2,12 @@ from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from langchain_postgres.vectorstores import PGVector
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_openai import OpenAIEmbeddings
-import psycopg
-from langchain_ollama import OllamaLLM
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_anthropic import ChatAnthropic
-from langchain_openai import ChatOpenAI
+import psycopg
 from langchain.chains import RetrievalQA
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import TextLoader
+from langchain_core.documents import Document
 import os
 import shutil
 import glob
@@ -66,12 +63,9 @@ class RAGEngine:
             ) 
             print("[INFO] OpenAI 원격 임베딩 사용")
         else:
-            self.embeddings = HuggingFaceEmbeddings(
-                model_name=os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-large"),
-                model_kwargs={'device': 'cpu'},
-                encode_kwargs={'normalize_embeddings': True}
-            )
-            print("[INFO] 로컬 HuggingFace 임베딩 사용")
+            # HuggingFace 임베딩 제거됨 - OpenAI만 사용
+            print("[ERROR] 로컬 임베딩이 비활성화되었습니다. USE_REMOTE_EMBEDDINGS=true로 설정하세요.")
+            raise ValueError("로컬 임베딩 지원이 제거되었습니다. OpenAI 임베딩을 사용하세요.")
         
         # PostgreSQL PGVector 벡터스토어 사용
         base_connection = f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
@@ -103,10 +97,22 @@ class RAGEngine:
                 temperature=float(os.getenv("LLM_TEMPERATURE", "0.7")),
                 max_tokens=int(os.getenv("LLM_MAX_TOKENS", "2000"))
             )
+        elif llm_provider == "openai":
+            self.llm = ChatOpenAI(
+                model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                api_key=os.getenv("OPENAI_API_KEY"),
+                temperature=float(os.getenv("LLM_TEMPERATURE", "0.7")),
+                max_tokens=int(os.getenv("LLM_MAX_TOKENS", "2000"))
+            )
         else:
-            self.llm = OllamaLLM(
-                model="llama3.2",
-                base_url="http://localhost:11434"
+            # 기본값을 deepseek으로 설정
+            print("[WARNING] 지원되지 않는 LLM 제공자입니다. DeepSeek을 사용합니다.")
+            self.llm = ChatOpenAI(
+                model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+                api_key=os.getenv("DEEPSEEK_API_KEY"),
+                base_url="https://api.deepseek.com",
+                temperature=float(os.getenv("LLM_TEMPERATURE", "0.7")),
+                max_tokens=int(os.getenv("LLM_MAX_TOKENS", "2000"))
             )
         
         # 검색 관련 설정
@@ -127,25 +133,33 @@ class RAGEngine:
     def add_document(self, file_path: str):
         """문서를 벡터스토어에 추가 (다양한 인코딩 지원)"""
         # 인코딩 자동 감지 및 로드
+        content = None
         try:
             # UTF-8 먼저 시도
-            loader = TextLoader(file_path, encoding='utf-8')
-            documents = loader.load()
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
         except UnicodeDecodeError:
             try:
                 # CP949 (한국어 Windows 기본) 시도
-                loader = TextLoader(file_path, encoding='cp949')
-                documents = loader.load()
+                with open(file_path, 'r', encoding='cp949') as f:
+                    content = f.read()
                 print(f"[INFO] CP949 인코딩으로 로드됨: {file_path}")
             except UnicodeDecodeError:
                 try:
                     # UTF-8 with BOM 시도
-                    loader = TextLoader(file_path, encoding='utf-8-sig')
-                    documents = loader.load()
+                    with open(file_path, 'r', encoding='utf-8-sig') as f:
+                        content = f.read()
                     print(f"[INFO] UTF-8 BOM 인코딩으로 로드됨: {file_path}")
                 except Exception as e:
                     print(f"[ERROR] 파일 인코딩을 감지할 수 없습니다 ({file_path}): {e}")
                     return
+        
+        if not content:
+            print(f"[ERROR] 파일 내용이 비어있습니다: {file_path}")
+            return
+            
+        # Document 객체 생성
+        documents = [Document(page_content=content, metadata={"source": file_path})]
         
         chunk_size = int(os.getenv("CHUNK_SIZE", "1000"))
         chunk_overlap = int(os.getenv("CHUNK_OVERLAP", "200"))
