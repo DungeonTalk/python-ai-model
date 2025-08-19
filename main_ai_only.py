@@ -67,17 +67,38 @@ class RAGEngine:
             print("[ERROR] 로컬 임베딩이 비활성화되었습니다. USE_REMOTE_EMBEDDINGS=true로 설정하세요.")
             raise ValueError("로컬 임베딩 지원이 제거되었습니다. OpenAI 임베딩을 사용하세요.")
         
-        # PostgreSQL PGVector 벡터스토어 사용
+        # PostgreSQL PGVector 벡터스토어 사용 (재시도 로직 포함)
+        print(f"[DEBUG] PostgreSQL 환경변수 - HOST: {os.getenv('POSTGRES_HOST')}, PORT: {os.getenv('POSTGRES_PORT')}, DB: {os.getenv('POSTGRES_DB')}, USER: {os.getenv('POSTGRES_USER')}")
+        
         base_connection = f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}"
         connection_string = f"{base_connection}?options=-csearch_path%3Ddungeontalk_rag%2Cpublic"
         
-        self.vectorstore = PGVector(
-            embeddings=self.embeddings,
-            connection=connection_string,
-            collection_name="documents",
-            distance_strategy="cosine"
-        )
-        print("[INFO] PostgreSQL PGVector 벡터스토어 사용")
+        print(f"[DEBUG] 연결 문자열: postgresql://{os.getenv('POSTGRES_USER')}:***@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}/{os.getenv('POSTGRES_DB')}")
+        
+        # PostgreSQL 연결 재시도
+        max_retries = 5
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                print(f"[INFO] PostgreSQL 연결 시도 {attempt + 1}/{max_retries}...")
+                self.vectorstore = PGVector(
+                    embeddings=self.embeddings,
+                    connection=connection_string,
+                    collection_name="documents",
+                    distance_strategy="cosine"
+                )
+                print("[INFO] PostgreSQL PGVector 벡터스토어 연결 성공")
+                break
+            except Exception as e:
+                print(f"[ERROR] PostgreSQL 연결 실패 (시도 {attempt + 1}): {e}")
+                if attempt < max_retries - 1:
+                    print(f"[INFO] {retry_delay}초 후 재시도...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # 지수 백오프
+                else:
+                    print("[ERROR] PostgreSQL 연결을 포기합니다. 환경변수를 확인하세요.")
+                    raise
         
         # 환경변수에서 LLM 제공자 선택
         llm_provider = os.getenv("LLM_PROVIDER", "ollama").lower()
