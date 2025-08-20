@@ -22,9 +22,12 @@ COPY main_ai_enhanced.py ./
 COPY app/ ./app/
 COPY documents/ ./documents/
 
+# 벡터스토어 복사 (선택적)
+COPY vectorstore_openai/ ./vectorstore_openai/
+
 # 불필요한 파일 정리
-RUN find . -type d -name __pycache__ -delete && \
-    find . -type f -name "*.pyc" -delete
+RUN find . -type f -name "*.pyc" -delete && \
+    find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
 # 포트 노출
 EXPOSE 8001

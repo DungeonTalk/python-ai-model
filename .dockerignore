@@ -46,4 +46,3 @@ dist/
 main_backup_*.py
 setup.*
 streamlit_app.py
-app/
