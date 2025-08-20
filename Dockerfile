@@ -23,7 +23,7 @@ COPY app/ ./app/
 COPY documents/ ./documents/
 
 # 벡터스토어 복사 (선택적)
-COPY vectorstore_openai/ ./vectorstore_openai/
+# COPY vectorstore_openai/ ./vectorstore_openai/
 
 # 불필요한 파일 정리
 RUN find . -type f -name "*.pyc" -delete && \
