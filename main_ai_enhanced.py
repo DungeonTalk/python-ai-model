@@ -84,6 +84,7 @@ class EnhancedAiResponseRequest(BaseModel):
     doc_types: Optional[List[str]] = None  # 검색할 문서 타입 제한
     game_start_time: Optional[int] = None  # 게임 시작 시간 (Unix timestamp)
     target_duration: int = 15  # 목표 시간 (분)
+    character_stats: Optional[dict] = None  # 캐릭터 스탯 정보
 
 class EnhancedAiResponseResult(BaseModel):
     content: str
@@ -122,9 +123,17 @@ async def generate_enhanced_ai_response(request: EnhancedAiResponseRequest):
         raise HTTPException(status_code=500, detail="Enhanced RAG Engine이 초기화되지 않았습니다")
     
     try:
-        print(f"[INFO] Enhanced AI 응답 생성 - 게임방: {request.ai_game_room_id}, 세계관: {request.world_type}, 사용자: {request.current_user}")
+        # 캐릭터 정보 로깅
+        char_info = ""
+        if request.character_stats:
+            char_name = request.character_stats.get('name', request.current_user)
+            char_level = request.character_stats.get('level', '?')
+            char_class = request.character_stats.get('characterClass', '?')
+            char_info = f", 캐릭터: {char_name}(Lv.{char_level}, {char_class})"
         
-        # Enhanced RAG Engine으로 세계관별 응답 생성 (시간 관리 포함)
+        print(f"[INFO] Enhanced AI 응답 생성 - 게임방: {request.ai_game_room_id}, 세계관: {request.world_type}, 사용자: {request.current_user}{char_info}")
+        
+        # Enhanced RAG Engine으로 세계관별 응답 생성 (시간 관리 및 캐릭터 스탯 포함)
         result = enhanced_rag.generate_world_specific_response(
             world_type=request.world_type,
             context_messages=[msg.model_dump() for msg in request.context_messages],
@@ -133,7 +142,8 @@ async def generate_enhanced_ai_response(request: EnhancedAiResponseRequest):
             game_settings=request.game_settings,
             doc_types=request.doc_types,
             game_start_time=request.game_start_time,
-            target_duration=request.target_duration
+            target_duration=request.target_duration,
+            character_stats=request.character_stats
         )
         
         return EnhancedAiResponseResult(

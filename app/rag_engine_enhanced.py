@@ -197,7 +197,8 @@ class EnhancedRAGEngine:
     def generate_world_specific_response(self, world_type: str, context_messages: List[Dict], 
                                        current_user: str, current_message: str, 
                                        game_settings: str = "", doc_types: List[str] = None,
-                                       game_start_time: int = None, target_duration: int = 15) -> Dict:
+                                       game_start_time: int = None, target_duration: int = 15,
+                                       character_stats: Dict = None) -> Dict:
         """세계관별 특화 AI 응답 생성"""
         
         start_time = time.time()
@@ -249,7 +250,10 @@ class EnhancedRAGEngine:
         # 세계관별 설정
         world_setting = game_settings or f"{world_type} 세계관 TRPG 게임입니다."
         
-        # TRPG 질문 생성 (시간 관리 포함)
+        # 캐릭터 스탯 정보 포맷팅
+        character_info = self._format_character_stats(character_stats, current_user)
+        
+        # TRPG 질문 생성 (시간 관리 및 캐릭터 스탯 포함)
         trpg_question = f"""당신은 {world_type} 세계관의 TRPG GM입니다. 다중 플레이어 게임을 진행해주세요.
 
 ⏰ 게임 진행 상황:
@@ -260,6 +264,8 @@ class EnhancedRAGEngine:
 {"- ⚡ 클라이맥스 단계입니다. 긴장감 있게 마무리로 이끌어주세요." if game_phase == "클라이맥스" else ""}
 
 세계관 설정: {world_setting}
+
+{character_info}
 
 이전 대화 맥락:
 {context}
@@ -492,6 +498,70 @@ class EnhancedRAGEngine:
             "UNKNOWN": "게임이 종료되었습니다"
         }
         return reasons.get(game_result, "게임이 종료되었습니다")
+    
+    def _format_character_stats(self, character_stats: Dict, current_user: str) -> str:
+        """캐릭터 스탯 정보를 AI 프롬프트용으로 포맷팅"""
+        
+        if not character_stats:
+            return f"📊 {current_user}의 캐릭터 정보: 기본 스탯으로 게임을 진행합니다."
+        
+        try:
+            # 캐릭터 기본 정보
+            char_name = character_stats.get('name', current_user)
+            char_level = character_stats.get('level', 1)
+            char_class = character_stats.get('characterClass', '모험가')
+            
+            # 스탯 정보 (기본값 설정)
+            stats = character_stats.get('stats', {})
+            hp = stats.get('hp', 100)
+            max_hp = stats.get('maxHp', hp)
+            mp = stats.get('mp', 50)
+            max_mp = stats.get('maxMp', mp)
+            
+            # 능력치
+            abilities = character_stats.get('abilities', {})
+            strength = abilities.get('strength', 10)
+            agility = abilities.get('agility', 10)
+            intelligence = abilities.get('intelligence', 10)
+            constitution = abilities.get('constitution', 10)
+            
+            # 전투 관련 스탯
+            combat_stats = character_stats.get('combatStats', {})
+            attack_power = combat_stats.get('attackPower', 15)
+            defense = combat_stats.get('defense', 10)
+            critical_rate = combat_stats.get('criticalRate', 5)
+            
+            # 장비 정보
+            equipment = character_stats.get('equipment', {})
+            weapon = equipment.get('weapon', {}).get('name', '기본 무기')
+            armor = equipment.get('armor', {}).get('name', '기본 갑옷')
+            
+            formatted_stats = f"""📊 {char_name}의 캐릭터 정보:
+🏷️ 직업: {char_class} | 레벨: {char_level}
+
+💪 능력치:
+- 체력: {hp}/{max_hp} HP
+- 마나: {mp}/{max_mp} MP
+- 힘: {strength} | 민첩: {agility} | 지능: {intelligence} | 체질: {constitution}
+
+⚔️ 전투 스탯:
+- 공격력: {attack_power} | 방어력: {defense} | 치명타율: {critical_rate}%
+
+🎒 장비:
+- 무기: {weapon} | 방어구: {armor}
+
+💡 AI GM 지침:
+- 위 스탯을 기반으로 행동의 성공/실패 확률을 조정하세요
+- 캐릭터의 능력치에 맞는 이벤트와 선택지를 제공하세요
+- HP/MP 소모 및 회복을 자연스럽게 반영하세요
+- 스탯 변화가 있을 때 "{char_name}의 현재 상태"를 알려주세요
+- 장비와 직업 특성을 활용한 특별한 기회를 만들어주세요"""
+
+            return formatted_stats
+            
+        except Exception as e:
+            print(f"[WARNING] 캐릭터 스탯 포맷팅 오류: {e}")
+            return f"📊 {current_user}의 캐릭터 정보: 스탯 정보를 불러오는 중 오류가 발생했습니다. 기본 게임으로 진행합니다."
 
 
 # 테스트 코드

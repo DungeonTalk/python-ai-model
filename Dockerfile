@@ -18,7 +18,8 @@ RUN uv sync --no-dev && \
     uv cache clean
 
 # 애플리케이션 코드만 선택적 복사
-COPY main_ai_only.py ./
+COPY main_ai_enhanced.py ./
+COPY app/ ./app/
 COPY documents/ ./documents/
 
 # 불필요한 파일 정리
@@ -29,4 +30,4 @@ RUN find . -type d -name __pycache__ -delete && \
 EXPOSE 8001
 
 # 애플리케이션 실행
-CMD ["uv", "run", "python", "main_ai_only.py"]
+CMD ["uv", "run", "python", "main_ai_enhanced.py"]
