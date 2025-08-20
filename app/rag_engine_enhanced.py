@@ -340,7 +340,8 @@ class EnhancedRAGEngine:
                 "remaining_time": target_duration - elapsed_time if game_start_time else None,
                 "time_pressure": time_pressure,
                 "game_phase": game_phase,
-                "game_ended": game_ended
+                "game_ended": game_ended,
+                "game_result": self._determine_game_result(result["result"], game_phase)
             }
         }
     
