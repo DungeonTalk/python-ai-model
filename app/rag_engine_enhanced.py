@@ -8,8 +8,13 @@ import sys
 import time
 import json
 import requests
+import hashlib
 from typing import List, Dict, Optional
 from pathlib import Path
+from datetime import datetime, timedelta
+import threading
+import redis
+import pickle
 
 # utils 디렉토리를 Python path에 추가
 sys.path.append(os.path.join(os.path.dirname(__file__), 'utils'))
@@ -25,6 +30,125 @@ from dotenv import load_dotenv
 from metadata_generator import MetadataGenerator
 
 load_dotenv()
+
+class RedisCache:
+    """AI 응답 캐싱을 위한 Redis 기반 캐시"""
+    
+    def __init__(self, ttl_minutes=30):
+        # Redis 연결 설정 (Docker 환경의 Valkey 캐시 서버)
+        redis_host = os.getenv("REDIS_CACHE_HOST", "dgt-valkey-cache")
+        redis_port = int(os.getenv("REDIS_CACHE_PORT", "6379"))
+        
+        try:
+            self.redis_client = redis.Redis(
+                host=redis_host, 
+                port=redis_port, 
+                decode_responses=False,  # pickle 사용으로 인해 False
+                socket_connect_timeout=5,
+                socket_timeout=5
+            )
+            # 연결 테스트
+            self.redis_client.ping()
+            print(f"[CACHE] ✅ Redis 캐시 연결 성공: {redis_host}:{redis_port}")
+        except Exception as e:
+            print(f"[CACHE] ❌ Redis 연결 실패: {e}, 메모리 캐시로 폴백")
+            self.redis_client = None
+            self._fallback_cache = {}
+            self._fallback_times = {}
+            
+        self.ttl_seconds = ttl_minutes * 60
+        self.cache_prefix = "ai_response:"
+    
+    def _create_key(self, world_type: str, user: str, message: str, context_hash: str) -> str:
+        """캐시 키 생성"""
+        content = f"{world_type}:{user}:{message}:{context_hash}"
+        key_hash = hashlib.md5(content.encode()).hexdigest()
+        return f"{self.cache_prefix}{key_hash}"
+    
+    def get(self, world_type: str, user: str, message: str, context_messages: List[Dict]) -> Optional[Dict]:
+        """캐시에서 응답 조회"""
+        try:
+            # 컨텍스트 메시지 해시 생성 (최근 3개만 사용)
+            recent_context = context_messages[-3:] if len(context_messages) > 3 else context_messages
+            context_str = json.dumps([msg.get("content", "") for msg in recent_context], sort_keys=True)
+            context_hash = hashlib.md5(context_str.encode()).hexdigest()
+            
+            key = self._create_key(world_type, user, message, context_hash)
+            
+            if self.redis_client:
+                # Redis에서 조회
+                cached_data = self.redis_client.get(key)
+                if cached_data:
+                    response = pickle.loads(cached_data)
+                    print(f"[CACHE] 🎯 Redis 캐시 히트: {key[-8:]}...")
+                    return response
+            else:
+                # 폴백 메모리 캐시
+                if key in self._fallback_cache:
+                    if datetime.now() - self._fallback_times[key] <= timedelta(seconds=self.ttl_seconds):
+                        print(f"[CACHE] 🎯 메모리 폴백 캐시 히트: {key[-8:]}...")
+                        return self._fallback_cache[key]
+                    else:
+                        del self._fallback_cache[key]
+                        del self._fallback_times[key]
+            
+            return None
+            
+        except Exception as e:
+            print(f"[CACHE] ⚠️ 캐시 조회 오류: {e}")
+            return None
+    
+    def put(self, world_type: str, user: str, message: str, context_messages: List[Dict], response: Dict):
+        """응답을 캐시에 저장"""
+        try:
+            # 컨텍스트 해시 생성
+            recent_context = context_messages[-3:] if len(context_messages) > 3 else context_messages
+            context_str = json.dumps([msg.get("content", "") for msg in recent_context], sort_keys=True)
+            context_hash = hashlib.md5(context_str.encode()).hexdigest()
+            
+            key = self._create_key(world_type, user, message, context_hash)
+            
+            if self.redis_client:
+                # Redis에 저장 (TTL과 함께)
+                cached_data = pickle.dumps(response)
+                self.redis_client.setex(key, self.ttl_seconds, cached_data)
+                print(f"[CACHE] 💾 Redis 캐시 저장: {key[-8:]}... (TTL: {self.ttl_seconds}초)")
+            else:
+                # 폴백 메모리 캐시
+                self._fallback_cache[key] = response
+                self._fallback_times[key] = datetime.now()
+                print(f"[CACHE] 💾 메모리 폴백 캐시 저장: {key[-8:]}...")
+                
+                # 메모리 폴백 캐시 크기 제한
+                if len(self._fallback_cache) > 100:
+                    oldest_key = min(self._fallback_times.keys(), key=lambda k: self._fallback_times[k])
+                    del self._fallback_cache[oldest_key]
+                    del self._fallback_times[oldest_key]
+                    
+        except Exception as e:
+            print(f"[CACHE] ⚠️ 캐시 저장 오류: {e}")
+    
+    def get_stats(self) -> Dict:
+        """캐시 통계 조회"""
+        try:
+            if self.redis_client:
+                info = self.redis_client.info()
+                keys_count = len(self.redis_client.keys(f"{self.cache_prefix}*"))
+                return {
+                    "type": "redis",
+                    "keys_count": keys_count,
+                    "memory_usage": info.get('used_memory_human', 'Unknown'),
+                    "hits": info.get('keyspace_hits', 0),
+                    "misses": info.get('keyspace_misses', 0)
+                }
+            else:
+                return {
+                    "type": "fallback_memory",
+                    "keys_count": len(self._fallback_cache)
+                }
+        except Exception as e:
+            return {"type": "error", "message": str(e)}
+
 
 class EnhancedRAGEngine:
     """메타데이터 기반 세계관 분리를 지원하는 향상된 RAG 엔진"""
@@ -48,6 +172,11 @@ class EnhancedRAGEngine:
         
         # LLM 설정
         self._setup_llm()
+        
+        # Redis 응답 캐시 초기화
+        cache_ttl = int(os.getenv("CACHE_TTL_MINUTES", "30"))
+        self.response_cache = RedisCache(ttl_minutes=cache_ttl)
+        print(f"[INFO] Redis 응답 캐시 초기화: TTL {cache_ttl}분")
         
         # 메타데이터 생성기 초기화
         self.metadata_generator = MetadataGenerator()
@@ -177,8 +306,12 @@ class EnhancedRAGEngine:
             print(f"[ERROR] 문서 추가 실패: {file_path} - {e}")
             return {"success": False, "error": str(e)}
     
-    def create_world_specific_retriever(self, world_type: str, doc_types: List[str] = None, k: int = 3):
-        """세계관별 특화 검색기 생성"""
+    def create_world_specific_retriever(self, world_type: str, doc_types: List[str] = None, k: int = None):
+        """세계관별 특화 검색기 생성 (최적화됨)"""
+        
+        # 검색 결과 수 환경변수에서 설정
+        if k is None:
+            k = int(os.getenv("VECTOR_SEARCH_K", "5"))
         
         # 기본 필터: 세계관
         search_filter = {"world_type": world_type}
@@ -187,21 +320,45 @@ class EnhancedRAGEngine:
         if doc_types:
             search_filter["doc_type"] = {"$in": doc_types}
         
-        return self.vectorstore.as_retriever(
-            search_kwargs={
-                "k": k,
-                "filter": search_filter
-            }
-        )
+        # 하이브리드 검색 전략: 유사도 + MMR (Maximal Marginal Relevance)
+        search_type = os.getenv("VECTOR_SEARCH_TYPE", "similarity")
+        
+        if search_type == "mmr":
+            # MMR 검색으로 다양성 있는 결과 확보
+            return self.vectorstore.as_retriever(
+                search_type="mmr",
+                search_kwargs={
+                    "k": k,
+                    "filter": search_filter,
+                    "fetch_k": k * 2,  # 더 많은 후보에서 선택
+                    "lambda_mult": 0.7  # 관련성 vs 다양성 균형
+                }
+            )
+        else:
+            # 기본 유사도 검색
+            return self.vectorstore.as_retriever(
+                search_kwargs={
+                    "k": k,
+                    "filter": search_filter
+                }
+            )
     
     def generate_world_specific_response(self, world_type: str, context_messages: List[Dict], 
                                        current_user: str, current_message: str, 
                                        game_settings: str = "", doc_types: List[str] = None,
-                                       game_start_time: int = None, target_duration: int = 15,
+                                       game_start_time: int = None, target_duration: int = None,
                                        character_stats: Dict = None) -> Dict:
         """세계관별 특화 AI 응답 생성"""
         
         start_time = time.time()
+        
+        # 캐시에서 응답 확인 (게임 종료가 아닌 일반 응답만 캐싱)
+        if not current_message.lower().strip().endswith('[game_end]'):
+            cached_response = self.response_cache.get(world_type, current_user, current_message, context_messages)
+            if cached_response:
+                # 캐시된 응답에 새로운 타임스탬프 적용
+                cached_response['response_time'] = int((time.time() - start_time) * 1000)
+                return cached_response
         
         # 세계관별 검색기 생성
         retriever = self.create_world_specific_retriever(world_type, doc_types)
@@ -216,7 +373,8 @@ class EnhancedRAGEngine:
         # 컨텍스트 메시지 포맷팅
         context = ""
         if context_messages:
-            recent_messages = context_messages[-10:]  # 최근 10개 메시지만
+            max_context_messages = int(os.getenv("MAX_CONTEXT_MESSAGES", "10"))
+            recent_messages = context_messages[-max_context_messages:]  # 최근 N개 메시지만
             for msg in recent_messages:
                 sender = msg.get("senderNickname", "Unknown")
                 content = msg.get("content", "")
@@ -226,6 +384,10 @@ class EnhancedRAGEngine:
         elapsed_time = 0
         time_pressure = "보통"
         game_phase = "시작"
+        
+        # 기본 게임 지속 시간 설정 (환경변수에서 로드)
+        if target_duration is None:
+            target_duration = int(os.getenv("DEFAULT_GAME_DURATION_MINUTES", "15"))
         
         if game_start_time:
             elapsed_time = int((start_time - game_start_time) / 60)  # 분 단위
@@ -293,20 +455,18 @@ class EnhancedRAGEngine:
     - 시간이 완전히 소진되었을 때
     - 중간 진행 상황이나 부분적 성취에는 절대 사용하지 마세요
 15. 게임이 진짜로 완전히 끝났을 때만 응답 끝에 '[GAME_END]'를 포함해주세요
-16. **게임 결과 판정**: 게임이 종료될 때 반드시 다음 중 하나를 응답 마지막에 포함해주세요:
-    - '[GAME_RESULT: SUCCESS]' : 파티가 주요 목표를 달성하거나 성공적인 결과를 얻었을 때
-    - '[GAME_RESULT: FAILURE]' : 파티가 전멸하거나 중요한 목표에 실패했을 때
-    - '[GAME_RESULT: PARTIAL]' : 일부 성과는 있었지만 완전한 성공은 아닐 때
+16. **중요! 게임 결과**: [GAME_END] 사용 시 반드시 다음도 함께 포함하세요:
+    SUCCESS-RESULT 또는 FAILURE-RESULT 중 하나를 반드시 포함!
     
-    예시: "...그렇게 모험이 끝났습니다. [GAME_END] [GAME_RESULT: SUCCESS]"
+    성공 시: "[GAME_END] SUCCESS-RESULT" 
+    실패 시: "[GAME_END] FAILURE-RESULT"
     
-    **판정 기준**:
-    - 주요 적을 처치하고 목표를 달성했다면 SUCCESS
-    - 파티원이 살아있고 일정한 성과를 거두었다면 SUCCESS 또는 PARTIAL  
-    - 파티가 전멸하거나 완전히 실패했다면 FAILURE
-    - 애매한 경우에는 전체적인 모험의 성취도를 종합 판단하세요"""
+    성공 기준: 적 처치, 목표 달성, 파티 생존, 성과 획득
+    실패 기준: 전멸, 완전 실패, 목표 완전 포기"""
         
-        result = qa_chain.invoke({"query": trpg_question})
+        # AI API 호출 with 재시도 로직
+        max_retries = int(os.getenv("MAX_RETRY_ATTEMPTS", "3"))
+        result = self._invoke_with_retry(qa_chain, {"query": trpg_question}, max_retries)
         
         end_time = time.time()
         response_time = int((end_time - start_time) * 1000)
@@ -345,7 +505,7 @@ class EnhancedRAGEngine:
             # except Exception as e:
             #     print(f"[WARNING] 게임 종료 알림 전송 실패: {e}")
         
-        return {
+        final_response = {
             "content": result["result"],
             "response_time": response_time,
             "world_type": world_type,
@@ -359,6 +519,65 @@ class EnhancedRAGEngine:
                 "game_ended": game_ended,
                 "game_result": self._determine_game_result(result["result"], game_phase)
             }
+        }
+        
+        # 게임 종료가 아닌 응답만 캐시에 저장
+        if not game_ended:
+            self.response_cache.put(world_type, current_user, current_message, context_messages, final_response)
+        
+        return final_response
+    
+    def _invoke_with_retry(self, qa_chain, query_dict: Dict, max_retries: int) -> Dict:
+        """AI API 호출 재시도 로직"""
+        last_exception = None
+        
+        for attempt in range(max_retries):
+            try:
+                print(f"[RETRY] AI API 호출 시도 {attempt + 1}/{max_retries}")
+                result = qa_chain.invoke(query_dict)
+                print(f"[RETRY] ✅ AI API 호출 성공 (시도 {attempt + 1})")
+                return result
+                
+            except Exception as e:
+                last_exception = e
+                error_msg = str(e).lower()
+                
+                # 특정 에러 타입에 따른 대기 시간 조정
+                if "rate limit" in error_msg or "429" in error_msg:
+                    wait_time = 2 ** attempt  # 지수 백오프: 1, 2, 4초
+                    print(f"[RETRY] ⚠️ Rate limit 오류, {wait_time}초 대기 후 재시도")
+                elif "overloaded" in error_msg or "529" in error_msg:
+                    wait_time = 5 * (attempt + 1)  # 5, 10, 15초
+                    print(f"[RETRY] ⚠️ 서버 과부하, {wait_time}초 대기 후 재시도")
+                elif "timeout" in error_msg:
+                    wait_time = 3
+                    print(f"[RETRY] ⚠️ 타임아웃 오류, {wait_time}초 대기 후 재시도")
+                else:
+                    wait_time = 1
+                    print(f"[RETRY] ❌ 일반 오류: {e}, {wait_time}초 대기 후 재시도")
+                
+                if attempt < max_retries - 1:  # 마지막 시도가 아닌 경우만 대기
+                    time.sleep(wait_time)
+        
+        # 모든 재시도 실패 시 폴백 응답 생성
+        print(f"[RETRY] ❌ 모든 재시도 실패: {last_exception}")
+        return self._create_fallback_response()
+    
+    def _create_fallback_response(self) -> Dict:
+        """AI API 실패 시 폴백 응답 생성"""
+        fallback_messages = [
+            "던전 마스터가 잠시 생각에 잠겼습니다... 조금만 기다려 주세요.",
+            "마법의 힘이 불안정합니다. 잠시 후 다시 시도해주세요.",
+            "고대 마법서의 페이지가 흐릿해집니다. 다시 한번 말씀해 주세요.",
+            "던전의 마법진이 일시적으로 불안정합니다. 재시도 부탁드립니다."
+        ]
+        
+        import random
+        selected_message = random.choice(fallback_messages)
+        
+        return {
+            "result": f"🔮 **시스템 알림** 🔮\n\n{selected_message}\n\n*AI 서비스에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해주세요.*",
+            "source_documents": []
         }
     
     def _load_file_content(self, file_path: str) -> Optional[str]:
@@ -422,37 +641,37 @@ class EnhancedRAGEngine:
     def _determine_game_result(self, ai_message: str, game_phase: str) -> str:
         """AI 메시지와 게임 단계를 분석해서 게임 결과 판단"""
         
-        # 1. 최우선: AI가 직접 제공한 게임 결과 태그 확인
-        import re
-        result_tag_match = re.search(r'\[GAME_RESULT:\s*(SUCCESS|FAILURE|PARTIAL)\]', ai_message, re.IGNORECASE)
-        if result_tag_match:
-            ai_result = result_tag_match.group(1).upper()
-            print(f"[GAME_RESULT] AI 직접 판정: {ai_result}")
-            # PARTIAL도 성공으로 처리 (부분적 성공도 경험치 지급)
-            return "SUCCESS" if ai_result in ["SUCCESS", "PARTIAL"] else "FAILURE"
+        print(f"[DEBUG] 🔍 게임 결과 판정 시작")
+        print(f"[DEBUG] 메시지에 'SUCCESS-RESULT' 포함: {'SUCCESS-RESULT' in ai_message}")
+        print(f"[DEBUG] 메시지에 'FAILURE-RESULT' 포함: {'FAILURE-RESULT' in ai_message}")
         
-        # 2. 폴백: 기존 키워드 기반 판단 (AI 태그가 없는 경우에만)
-        timeout_keywords = ["시간이 모두 소진", "제한 시간 초과", "시간이 부족하여 종료"]
+        # 1. 최우선: 간단한 SUCCESS-RESULT / FAILURE-RESULT 태그 확인
+        if "SUCCESS-RESULT" in ai_message:
+            print(f"[GAME_RESULT] ✅ AI 직접 판정: SUCCESS")
+            return "SUCCESS"
+        
+        if "FAILURE-RESULT" in ai_message:
+            print(f"[GAME_RESULT] ❌ AI 직접 판정: FAILURE") 
+            return "FAILURE"
+        
+        # 2. 폴백: 명확한 실패 키워드 확인
         failure_keywords = [
             "파티가 전멸했습니다", "모험이 실패로 끝났습니다", "임무에 실패했습니다",
             "게임오버입니다", "더 이상 진행할 수 없습니다", "모험이 여기서 끝납니다",
             "파티원들이 모두 쓰러졌습니다"
         ]
         
-        # 시간 초과로 인한 종료
-        if game_phase == "종료":
-            if any(keyword in ai_message for keyword in timeout_keywords):
-                return "TIMEOUT"
-            else:
-                return "TIMEOUT"  # 시간 종료 시 기본값
-        
-        # 명확한 실패만 인식
         if any(keyword in ai_message for keyword in failure_keywords):
+            print(f"[GAME_RESULT] ❌ 키워드 기반 판정: FAILURE")
             return "FAILURE"
         
-        # AI 태그도 없고 명확한 실패 키워드도 없으면 기본적으로 성공으로 처리
-        # (게임이 끝났다면 어느 정도 성과는 있었다고 가정)
-        print(f"[GAME_RESULT] 폴백 판정: SUCCESS (AI 태그 없음, 명확한 실패 없음)")
+        # 3. 시간 초과
+        if game_phase == "종료":
+            print(f"[GAME_RESULT] ⏰ 시간 초과 판정: TIMEOUT")
+            return "TIMEOUT"
+        
+        # 4. 기본값: 성공 (게임이 끝났다면 기본적으로 성공으로 처리)
+        print(f"[GAME_RESULT] 🎯 기본값 판정: SUCCESS (명확한 실패 없음)")
         return "SUCCESS"
     
     def _send_game_end_notification(self, ai_game_room_id: str, game_result: str, 

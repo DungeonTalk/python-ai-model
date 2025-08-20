@@ -170,6 +170,19 @@ async def generate_ai_response_compatible(request: EnhancedAiResponseRequest):
     
     return await generate_enhanced_ai_response(request)
 
+# 캐시 통계 조회 엔드포인트
+@app.get("/cache-stats")
+async def get_cache_stats():
+    """Redis 캐시 통계 조회"""
+    try:
+        if enhanced_rag:
+            stats = enhanced_rag.response_cache.get_stats()
+            return {"success": True, "stats": stats}
+        else:
+            return {"success": False, "error": "RAG Engine not initialized"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"캐시 통계 조회 실패: {str(e)}")
+
 # 문서 업로드 엔드포인트
 @app.post("/upload-document")
 async def upload_document(
