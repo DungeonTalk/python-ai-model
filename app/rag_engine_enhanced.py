@@ -292,7 +292,19 @@ class EnhancedRAGEngine:
     - 파티가 전멸하여 더 이상 진행 불가능할 때  
     - 시간이 완전히 소진되었을 때
     - 중간 진행 상황이나 부분적 성취에는 절대 사용하지 마세요
-15. 게임이 진짜로 완전히 끝났을 때만 응답 끝에 '[GAME_END]'를 포함해주세요"""
+15. 게임이 진짜로 완전히 끝났을 때만 응답 끝에 '[GAME_END]'를 포함해주세요
+16. **게임 결과 판정**: 게임이 종료될 때 반드시 다음 중 하나를 응답 마지막에 포함해주세요:
+    - '[GAME_RESULT: SUCCESS]' : 파티가 주요 목표를 달성하거나 성공적인 결과를 얻었을 때
+    - '[GAME_RESULT: FAILURE]' : 파티가 전멸하거나 중요한 목표에 실패했을 때
+    - '[GAME_RESULT: PARTIAL]' : 일부 성과는 있었지만 완전한 성공은 아닐 때
+    
+    예시: "...그렇게 모험이 끝났습니다. [GAME_END] [GAME_RESULT: SUCCESS]"
+    
+    **판정 기준**:
+    - 주요 적을 처치하고 목표를 달성했다면 SUCCESS
+    - 파티원이 살아있고 일정한 성과를 거두었다면 SUCCESS 또는 PARTIAL  
+    - 파티가 전멸하거나 완전히 실패했다면 FAILURE
+    - 애매한 경우에는 전체적인 모험의 성취도를 종합 판단하세요"""
         
         result = qa_chain.invoke({"query": trpg_question})
         
@@ -316,9 +328,13 @@ class EnhancedRAGEngine:
         
         # 게임 종료 시 자바 백엔드에 알림 전송
         if game_ended:
-            # 실제 게임 방 ID는 별도 매개변수로 전달되어야 함
-            # 임시로 빈 문자열 사용
-            print(f"[GAME_END] 🎮 게임 종료 감지됨! 결과: {self._determine_game_result(result['result'], game_phase)}")
+            # 디버깅을 위해 실제 AI 응답 내용 출력
+            print(f"[DEBUG] 📝 AI 전체 응답 내용:")
+            print(f"[DEBUG] {result['result']}")
+            print(f"[DEBUG] 응답 길이: {len(result['result'])} 글자")
+            
+            game_result = self._determine_game_result(result['result'], game_phase)
+            print(f"[GAME_END] 🎮 게임 종료 감지됨! 결과: {game_result}")
             # try:
             #     self._send_game_end_notification(
             #         ai_game_room_id=ai_game_room_id,  # 매개변수로 받아야 함
@@ -406,47 +422,38 @@ class EnhancedRAGEngine:
     def _determine_game_result(self, ai_message: str, game_phase: str) -> str:
         """AI 메시지와 게임 단계를 분석해서 게임 결과 판단"""
         
-        # 더 구체적이고 엄격한 키워드 기반 결과 판단
-        # 명확한 게임 종료 표현만 인식
-        definitive_success_keywords = [
-            "모험이 성공적으로 완료", "퀘스트를 모두 달성", "임무를 성공적으로 마쳤습니다",
-            "모든 목표를 달성했습니다", "던전을 완전히 클리어", "최종 승리를 거두었습니다",
-            "위대한 업적을 달성", "전설적인 모험을 완료"
-        ]
+        # 1. 최우선: AI가 직접 제공한 게임 결과 태그 확인
+        import re
+        result_tag_match = re.search(r'\[GAME_RESULT:\s*(SUCCESS|FAILURE|PARTIAL)\]', ai_message, re.IGNORECASE)
+        if result_tag_match:
+            ai_result = result_tag_match.group(1).upper()
+            print(f"[GAME_RESULT] AI 직접 판정: {ai_result}")
+            # PARTIAL도 성공으로 처리 (부분적 성공도 경험치 지급)
+            return "SUCCESS" if ai_result in ["SUCCESS", "PARTIAL"] else "FAILURE"
         
-        definitive_failure_keywords = [
+        # 2. 폴백: 기존 키워드 기반 판단 (AI 태그가 없는 경우에만)
+        timeout_keywords = ["시간이 모두 소진", "제한 시간 초과", "시간이 부족하여 종료"]
+        failure_keywords = [
             "파티가 전멸했습니다", "모험이 실패로 끝났습니다", "임무에 실패했습니다",
             "게임오버입니다", "더 이상 진행할 수 없습니다", "모험이 여기서 끝납니다",
             "파티원들이 모두 쓰러졌습니다"
         ]
         
-        timeout_keywords = ["시간이 모두 소진", "제한 시간 초과", "시간이 부족하여 종료"]
-        
-        ai_lower = ai_message.lower()
-        
-        # 시간 단계 기반 우선 판단 (가장 확실한 종료 조건)
+        # 시간 초과로 인한 종료
         if game_phase == "종료":
-            # 시간 초과로 인한 종료
             if any(keyword in ai_message for keyword in timeout_keywords):
                 return "TIMEOUT"
-            # 시간 종료 상황에서도 성공/실패 판단
-            elif any(keyword in ai_message for keyword in definitive_success_keywords):
-                return "SUCCESS"
-            elif any(keyword in ai_message for keyword in definitive_failure_keywords):
-                return "FAILURE"
             else:
                 return "TIMEOUT"  # 시간 종료 시 기본값
         
-        # 명확한 성공 선언만 인식 (더 엄격하게)
-        if any(keyword in ai_message for keyword in definitive_success_keywords):
-            return "SUCCESS"
-        
-        # 명확한 실패 선언만 인식 (더 엄격하게)
-        if any(keyword in ai_message for keyword in definitive_failure_keywords):
+        # 명확한 실패만 인식
+        if any(keyword in ai_message for keyword in failure_keywords):
             return "FAILURE"
         
-        # 기본값: 게임 계속 진행
-        return "UNKNOWN"
+        # AI 태그도 없고 명확한 실패 키워드도 없으면 기본적으로 성공으로 처리
+        # (게임이 끝났다면 어느 정도 성과는 있었다고 가정)
+        print(f"[GAME_RESULT] 폴백 판정: SUCCESS (AI 태그 없음, 명확한 실패 없음)")
+        return "SUCCESS"
     
     def _send_game_end_notification(self, ai_game_room_id: str, game_result: str, 
                                   final_message: str, elapsed_time: int):
