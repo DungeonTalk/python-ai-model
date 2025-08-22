@@ -597,6 +597,10 @@ class EnhancedRAGEngine:
         print(f"[ERROR] 모든 인코딩 시도 실패: {file_path}")
         return None
     
+    def load_documents(self, documents_path: str = "./documents"):
+        """문서 로딩 (호환성을 위한 메서드)"""
+        return self.rescan_documents_with_metadata(documents_path)
+    
     def rescan_documents_with_metadata(self, documents_path: str = "./documents"):
         """메타데이터와 함께 문서 폴더 재스캔"""
         if not os.path.exists(documents_path):

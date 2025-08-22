@@ -21,6 +21,8 @@ RUN uv sync --no-dev && \
 COPY main_ai_enhanced.py ./
 COPY app/ ./app/
 COPY documents/ ./documents/
+COPY rag_admin.html ./
+COPY test_enhanced_rag.html ./
 
 # 벡터스토어 복사 (선택적)
 # COPY vectorstore_openai/ ./vectorstore_openai/
