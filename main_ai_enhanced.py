@@ -56,10 +56,24 @@ app.add_middleware(
 # 정적 파일 서빙 추가
 app.mount("/static", StaticFiles(directory="."), name="static")
 
-# Enhanced RAG Engine 초기화
+# Enhanced RAG Engine 초기화 및 문서 로딩
 try:
     enhanced_rag = EnhancedRAGEngine()
     print("[INFO] Enhanced RAG Engine 초기화 성공")
+    
+    # 서버 시작 시 자동으로 문서 로딩
+    documents_dir = "./documents"
+    if os.path.exists(documents_dir) and os.listdir(documents_dir):
+        print(f"[INFO] 문서 디렉토리에서 문서 로딩 시작: {documents_dir}")
+        try:
+            enhanced_rag.load_documents(documents_dir)
+            print(f"[INFO] ✅ 문서 로딩 완료 - {len(os.listdir(documents_dir))}개 파일 처리")
+        except Exception as doc_error:
+            print(f"[WARNING] 문서 로딩 실패: {doc_error}")
+            print("[WARNING] 벡터 DB가 비어있을 수 있습니다. 수동으로 문서를 업로드하세요.")
+    else:
+        print(f"[WARNING] 문서 디렉토리가 비어있거나 존재하지 않습니다: {documents_dir}")
+        
 except Exception as e:
     print(f"[ERROR] Enhanced RAG Engine 초기화 실패: {e}")
     enhanced_rag = None
@@ -257,6 +271,48 @@ async def rescan_documents():
         print(f"[ERROR] 문서 재스캔 실패: {e}")
         raise HTTPException(status_code=500, detail=f"문서 재스캔 중 오류: {str(e)}")
 
+# 벡터 DB 수동 초기화 엔드포인트 (AWS 배포용)
+@app.post("/init-vectordb")
+async def init_vectordb():
+    """벡터 DB 수동 초기화 (AWS 배포 시 사용)"""
+    
+    if not enhanced_rag:
+        raise HTTPException(status_code=500, detail="Enhanced RAG Engine이 초기화되지 않았습니다")
+    
+    try:
+        documents_dir = "./documents"
+        
+        if not os.path.exists(documents_dir):
+            raise HTTPException(status_code=404, detail="documents 디렉토리를 찾을 수 없습니다")
+        
+        files = os.listdir(documents_dir)
+        if not files:
+            raise HTTPException(status_code=404, detail="documents 디렉토리에 파일이 없습니다")
+        
+        print(f"[INFO] 벡터 DB 수동 초기화 시작 - {len(files)}개 파일 처리")
+        
+        # 문서 로딩 실행
+        enhanced_rag.load_documents(documents_dir)
+        
+        # 초기화 결과 확인
+        try:
+            docs = enhanced_rag.vectorstore.similarity_search("test", k=1)
+            success = len(docs) > 0
+        except:
+            success = False
+        
+        return {
+            "message": "벡터 DB 초기화 완료" if success else "벡터 DB 초기화 실행됨 (결과 확인 필요)",
+            "files_processed": len(files),
+            "files": files,
+            "initialization_success": success,
+            "timestamp": time.time()
+        }
+        
+    except Exception as e:
+        print(f"[ERROR] 벡터 DB 초기화 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"벡터 DB 초기화 중 오류: {str(e)}")
+
 # 세계관 목록 조회 (Java API 연동)
 @app.get("/world-types")
 async def get_world_types():
@@ -281,6 +337,60 @@ async def get_world_stats():
         raise HTTPException(status_code=500, detail="Enhanced RAG Engine이 초기화되지 않았습니다")
     
     return enhanced_rag.get_world_type_stats()
+
+# 벡터 DB 상태 확인 엔드포인트
+@app.get("/vector-db-status")
+async def vector_db_status():
+    """벡터 DB 상태 및 문서 수 확인"""
+    if not enhanced_rag:
+        raise HTTPException(status_code=500, detail="Enhanced RAG Engine이 초기화되지 않았습니다")
+    
+    try:
+        # 벡터스토어에서 문서 수 확인
+        docs = enhanced_rag.vectorstore.similarity_search("test", k=1)
+        
+        # PostgreSQL에서 실제 문서 수 확인
+        try:
+            # 직접 PostgreSQL 쿼리로 확인
+            import psycopg2
+            from psycopg2.extras import RealDictCursor
+            
+            conn = psycopg2.connect(
+                host=os.getenv('POSTGRES_HOST', 'postgres'),
+                port=int(os.getenv('POSTGRES_PORT', 5432)),
+                user=os.getenv('POSTGRES_USER', 'root'),
+                password=os.getenv('POSTGRES_PASSWORD', '1234'),
+                database=os.getenv('POSTGRES_DB', 'dungeondb')
+            )
+            
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute("SELECT COUNT(*) as count FROM langchain_pg_embedding;")
+            result = cursor.fetchone()
+            doc_count = result['count'] if result else 0
+            
+            cursor.close()
+            conn.close()
+            
+        except Exception as db_error:
+            doc_count = f"DB 접근 오류: {str(db_error)}"
+        
+        return {
+            "vectorstore_available": True,
+            "document_count": doc_count,
+            "sample_search_results": len(docs),
+            "documents_directory_exists": os.path.exists("./documents"),
+            "documents_in_dir": len(os.listdir("./documents")) if os.path.exists("./documents") else 0,
+            "timestamp": time.time()
+        }
+        
+    except Exception as e:
+        return {
+            "vectorstore_available": False,
+            "error": str(e),
+            "documents_directory_exists": os.path.exists("./documents"),
+            "documents_in_dir": len(os.listdir("./documents")) if os.path.exists("./documents") else 0,
+            "timestamp": time.time()
+        }
 
 # 헬스체크 엔드포인트
 @app.get("/health")
