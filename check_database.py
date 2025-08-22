@@ -13,11 +13,11 @@ def check_database():
     try:
         # PostgreSQL 연결
         conn = psycopg2.connect(
-            host=os.getenv('POSTGRES_HOST', 'localhost'),
+            host=os.getenv('POSTGRES_HOST', 'dungeontalk-db.cjis242saf7t.ap-northeast-2.rds.amazonaws.com'),
             port=os.getenv('POSTGRES_PORT', '5432'),
-            database=os.getenv('POSTGRES_DB', 'dungeontalk'),
+            database=os.getenv('POSTGRES_DB', 'dungeondb'),
             user=os.getenv('POSTGRES_USER', 'postgres'),
-            password=os.getenv('POSTGRES_PASSWORD')
+            password=os.getenv('POSTGRES_PASSWORD', dungeontalk)
         )
         
         cursor = conn.cursor()

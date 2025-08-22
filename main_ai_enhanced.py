@@ -103,7 +103,7 @@ class DocumentUploadRequest(BaseModel):
 async def fetch_world_types_from_java():
     """Java API에서 세계관 목록 조회"""
     try:
-        java_api_url = os.getenv("JAVA_API_BASE_URL", "http://localhost:8080")
+        java_api_url = os.getenv("JAVA_API_BASE_URL", "http://13.125.254.130")
         response = requests.get(f"{java_api_url}/api/world-types", timeout=5)
         if response.status_code == 200:
             return response.json()
