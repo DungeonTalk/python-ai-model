@@ -411,6 +411,15 @@ async def test_page():
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="테스트 페이지를 찾을 수 없습니다")
 
+# RAG 관리 페이지 엔드포인트
+@app.get("/admin")
+async def admin_page():
+    """RAG 데이터 관리 페이지"""
+    try:
+        return FileResponse("rag_admin.html")
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="관리 페이지를 찾을 수 없습니다")
+
 # 서버 정보 엔드포인트
 @app.get("/")
 async def root():
