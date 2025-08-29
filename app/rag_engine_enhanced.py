@@ -416,7 +416,8 @@ class EnhancedRAGEngine:
         character_info = self._format_character_stats(character_stats, current_user)
         
         # TRPG 질문 생성 (시간 관리 및 캐릭터 스탯 포함)
-        trpg_question = f"""당신은 {world_type} 세계관의 TRPG GM입니다. 다중 플레이어 게임을 진행해주세요.
+        trpg_question = f"""당신은 {world_type} 세계관의 전문 TRPG 게임 마스터입니다. 
+다음 상황에서 플레이어의 행동에 대해 생생하고 몰입감 있는 응답을 해주세요.
 
 ⏰ 게임 진행 상황:
 - 경과 시간: {elapsed_time}분 / 목표 시간: {target_duration}분

@@ -12,6 +12,7 @@ from typing import List, Optional
 import os
 import sys
 import time
+import json
 import requests
 from dotenv import load_dotenv
 
@@ -127,6 +128,7 @@ async def fetch_world_types_from_java():
     except Exception as e:
         print(f"[WARNING] Java API 연결 실패: {e}")
         return []
+
 
 # Enhanced AI 응답 생성 엔드포인트
 @app.post("/ai-response-enhanced", response_model=EnhancedAiResponseResult)
